@@ -26,7 +26,6 @@ void FLIPSolver::Simulate(float dt)
 	SolvePressure(40);
 	ProjectVelocity();
 
-
 	//6. Enforce boundaries
 	ApplyGridBoundaryConditions();
 
