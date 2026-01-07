@@ -3,8 +3,64 @@
 using namespace Solver_Utils;
 
 FLIPSolver::FLIPSolver(const SolverConfig& config) :
-	m_gridWeight{ Eigen::Tensor<float, 3>(m_cellNumX, m_cellNumY, m_cellNumZ) }
+	m_cellNumX{config.gridX},
+	m_cellNumY{config.gridY},
+	m_cellNumZ{config.gridZ},
+	m_numParticles{config.numParticles},
+	m_particleRadius{config.particleRadius},
+	m_gridV{m_cellNumX, m_cellNumY, m_cellNumZ, 3},
+	m_gridVBefore{ m_cellNumX, m_cellNumY, m_cellNumZ, 3 },
+	m_gridVAfter{ m_cellNumX, m_cellNumY, m_cellNumZ, 3 },
+	m_gridWeight{ m_cellNumX, m_cellNumY, m_cellNumZ },
+	m_gridPressure{ m_cellNumX, m_cellNumY, m_cellNumZ },
+	m_gridDivergence{ m_cellNumX, m_cellNumY, m_cellNumZ },
+	m_gridCellType{m_cellNumX, m_cellNumY, m_cellNumZ},
+	m_particlePos{m_numParticles, 3},
+	m_particleV{m_numParticles, 3}
 {
+}
+
+void FLIPSolver::Initialize()
+{
+	m_gridV.setZero();
+	m_gridVBefore.setZero();
+	m_gridVAfter.setZero();
+	m_gridWeight.setZero();
+	m_gridPressure.setZero();
+	m_gridDivergence.setZero();
+
+	//Reset all cells to air, !!this will keep solid cells the same
+	for (int x = 0; x < m_cellNumX; ++x){
+		for (int y = 0; y < m_cellNumY; ++y) {
+			for (int z = 0; z < m_cellNumZ; ++z){
+				if(m_gridCellType(x,y,z) != CellType::Solid)
+					m_gridCellType(x, y, z) = CellType::Air;
+			}
+		}
+	}
+	
+	//spawn particles, Temp for debugging
+	int idx = 0;
+	for (int y = m_cellNumY - 1; y >= 0 && idx < m_numParticles; --y) //start at the top
+	{
+		for (int x = 0; x < m_cellNumX && idx < m_numParticles; ++x)
+		{
+			for (int z = 0; z < m_cellNumZ && idx < m_numParticles; ++z)
+			{
+				// Place particle at cell center
+				m_particlePos.row(idx) = Eigen::Vector3f(
+					x + 0.5f,
+					y + 0.5f,
+					z + 0.5f
+				);
+
+				m_particleV.row(idx).setZero();
+
+				++idx;
+			}
+		}
+	}
+
 }
 
 void FLIPSolver::Simulate(float dt)
@@ -406,10 +462,9 @@ void FLIPSolver::IntegrateParticles(float dt)
 void FLIPSolver::ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix, int& iy, int& iz, Eigen::Vector3f& f)
 {
 	//convert from grid space to world space
-	float h = 1.0f / m_particleInvSpacing;
-	float gx = particle.x() * m_particleInvSpacing;
-	float gy = particle.y() * m_particleInvSpacing;
-	float gz = particle.z() * m_particleInvSpacing;
+	float gx = particle.x() * particleInvSpacing();
+	float gy = particle.y() * particleInvSpacing();
+	float gz = particle.z() * particleInvSpacing();
 
 	ix = std::clamp(int(std::floor(gx)), 0, m_cellNumX - 1);
 	iy = std::clamp(int(std::floor(gy)), 0, m_cellNumY - 1);

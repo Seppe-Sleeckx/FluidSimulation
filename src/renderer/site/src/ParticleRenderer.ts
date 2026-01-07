@@ -178,7 +178,7 @@ export class ParticleRenderer {
         const renderPassDescriptor: GPURenderPassDescriptor = {
             colorAttachments: [{
                 view: canvasTexture.createView(),
-                clearValue: [0.3, 0.3, 0.3, 1],
+                clearValue: [0.1, 0.1, 0.1, 1],
                 loadOp: "clear",
                 storeOp: "store"
             }],

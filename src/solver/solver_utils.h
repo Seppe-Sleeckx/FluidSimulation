@@ -3,10 +3,14 @@
 
 namespace Solver_Utils
 {
-    struct SolverConfig
+    struct SolverConfig //only use POD, Eigen or STL doesnt work well when needing to use it in js/typescript later
     {
-        std::array<int, 3> gridResolution;
+        int gridX;
+        int gridY;
+        int gridZ;
         int numParticles;
+        float particleRadius;
+        float alphaPic; //TEMP, Remove later
     };
 
     struct Weight3D

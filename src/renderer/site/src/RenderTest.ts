@@ -1,21 +1,14 @@
 import triangleVertWGSL from "./shaders/triangle.vert.wgsl?raw"
 import singleColorFragWGSL from "./shaders/single-color-particles.frag.wgsl?raw"
 
-import { Camera } from "./Camera";
 import { WebGPUContext } from "./WebgpuContext";
 
 export class RenderTest {
     private pipeline!: GPURenderPipeline;
-    private uniformBuffer!: GPUBuffer;
-    private bindGroup!: GPUBindGroup;
-    private particleBuffer!: GPUBuffer;
-    private depthTexture!: GPUTexture;
     private gpuContext: WebGPUContext;
-    private camera: Camera;
 
-    constructor(gpuContext: WebGPUContext, camera: Camera) {
+    constructor(gpuContext: WebGPUContext) {
         this.gpuContext = gpuContext;
-        this.camera = camera;
     }
 
     initialize() {

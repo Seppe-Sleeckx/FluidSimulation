@@ -19,6 +19,6 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(eigen)
 
-add_executable(Fluid_Solver ${SOURCES} "src/renderer/renderer_utils.h")
+add_library(Fluid_Solver ${SOURCES})
 
 target_link_libraries(Fluid_Solver PRIVATE Eigen3::Eigen)
