@@ -10,7 +10,6 @@ export class ParticleRenderer {
     private uniformBuffer!: GPUBuffer;
     private bindGroup!: GPUBindGroup;
     private particleBuffer!: GPUBuffer;
-    private depthTexture!: GPUTexture;
     private gpuContext: WebGPUContext;
     private camera: Camera;
     private maxParticles: number;
@@ -94,8 +93,6 @@ export class ParticleRenderer {
         //======================
         //Buffers
         //======================
-
-
         const uniformValues = new Float32Array(20) //4x4 matrix + resolution(vec2f) + size (f32) + 4 bytes padding
         this.uniformBuffer = device.createBuffer({
             size: uniformValues.byteLength,
@@ -111,7 +108,7 @@ export class ParticleRenderer {
         const sizeValue = uniformValues.subarray(sizeOffset, sizeOffset + 1)
 
         const canvas = this.gpuContext.context.canvas as HTMLCanvasElement;
-        sizeValue[0] = 10.0; //temp
+        sizeValue[0] = 100.0; //temp
         resolutionValue[0] = canvas.width;
         resolutionValue[1] = canvas.height;
         matrixValue.set(this.camera.getViewProjection(canvas.width / canvas.height));
@@ -123,19 +120,19 @@ export class ParticleRenderer {
         //Particle buffer
         //===============
         //TEMP: test
-        const rand = (min: number, max: number) => min + Math.random() * (max - min);
-        const vertexData = new Float32Array(this.maxParticles * 4);
-        for (let i = 0; i < this.maxParticles; ++i) {
-            const offset = i * 4;
-            vertexData[offset + 0] = rand(-1, 1);
-            vertexData[offset + 1] = rand(-1, 1);
-            vertexData[offset + 2] = rand(-1, 1);
-            vertexData[offset + 3] = 1;
-        }
+        //const rand = (min: number, max: number) => min + Math.random() * (max - min);
+        //const vertexData = new Float32Array(this.maxParticles * 4);
+        //for (let i = 0; i < this.maxParticles; ++i) {
+        //    const offset = i * 4;
+        //    vertexData[offset + 0] = rand(-1, 1);
+        //    vertexData[offset + 1] = rand(-1, 1);
+        //    vertexData[offset + 2] = rand(-1, 1);
+        //    vertexData[offset + 3] = 1;
+        //}
 
 
         this.particleBuffer = device.createBuffer({ //particle buffer, max particles * vec4<f32>
-            size: vertexData.byteLength,
+            size: this.maxParticles * 4 * 4,
             usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
         });
         //VERTEX: used as vertex input
@@ -143,15 +140,7 @@ export class ParticleRenderer {
 
 
         //TEMP: test
-        device.queue.writeBuffer(this.particleBuffer, 0, vertexData);
-
-
-        this.depthTexture = device.createTexture({
-            size: [canvas.width, canvas.height],
-            format: "depth24plus", //24 bit depth buffer
-            usage: GPUTextureUsage.RENDER_ATTACHMENT //allow this texture to be used in a render pass
-        });
-
+        //device.queue.writeBuffer(this.particleBuffer, 0, vertexData);
 
         //==============
         //Bindgroup
@@ -162,49 +151,21 @@ export class ParticleRenderer {
                 { binding: 0, /*@binding(0)*/ resource: { buffer: this.uniformBuffer } /*camera view projection matrix buffer*/ }
             ]
         });
-
-
-
     }
 
     updateParticles(data: Float32Array) {
         this.gpuContext.device.queue.writeBuffer(this.particleBuffer, 0, data.buffer, data.byteOffset, data.byteLength);
     }
 
-    draw() {
-
-        const canvasTexture = this.gpuContext.context.getCurrentTexture();
-
-        const renderPassDescriptor: GPURenderPassDescriptor = {
-            colorAttachments: [{
-                view: canvasTexture.createView(),
-                clearValue: [0.1, 0.1, 0.1, 1],
-                loadOp: "clear",
-                storeOp: "store"
-            }],
-            depthStencilAttachment: {
-                view: this.depthTexture.createView(),
-                depthClearValue: 1.0,
-                depthLoadOp: "clear",
-                depthStoreOp: "store"
-            },
-        };
-
+    Draw(pass: GPURenderPassEncoder) {
         //Set view projection matrix from camera
         const canvas = this.gpuContext.context.canvas as HTMLCanvasElement;
-        const viewProjection = this.camera.getViewProjection(canvas.width / canvas.height);
+        const viewProjection = this.camera.getViewProjection(canvas.width / canvas.height) as Float32Array;
         this.gpuContext.device.queue.writeBuffer(this.uniformBuffer, 0, viewProjection.buffer, viewProjection.byteOffset, viewProjection.byteLength);
-
-        const encoder = this.gpuContext.device.createCommandEncoder();
-        const pass = encoder.beginRenderPass(renderPassDescriptor);
 
         pass.setPipeline(this.pipeline);
         pass.setBindGroup(0, this.bindGroup);
         pass.setVertexBuffer(0, this.particleBuffer);
         pass.draw(6, this.maxParticles);
-        pass.end();
-
-        const commandBuffer = encoder.finish();
-        this.gpuContext.device.queue.submit([commandBuffer]);
     }
 }

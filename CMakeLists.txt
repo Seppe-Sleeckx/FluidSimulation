@@ -19,6 +19,33 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(eigen)
 
-add_library(Fluid_Solver ${SOURCES})
+add_library(Fluid_Solver ${SOURCES} "src/empty.cpp")
 
 target_link_libraries(Fluid_Solver PRIVATE Eigen3::Eigen)
+
+
+#Emscriptem build stuff
+if(EMSCRIPTEN)
+
+    add_executable(fluid_wasm src/empty.cpp) #needed because emscritpem can only generate WASM from executables, not libraries so we add an empty file where all libraries get pulled in as final link target
+
+    target_link_libraries(fluid_wasm
+        PRIVATE Fluid_Solver
+    )
+
+    set_target_properties(fluid_wasm PROPERTIES
+        OUTPUT_NAME "fluid_solver"
+        SUFFIX ".js"
+    )
+
+    target_link_options(fluid_wasm PRIVATE
+        "-sWASM=1"
+        "-sMODULARIZE=1"
+        "-sEXPORT_ES6=1"
+        "-sENVIRONMENT=web"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap', 'HEAP32', 'HEAPF32']"
+        "-sEXPORTED_FUNCTIONS=['_Create','_Destroy','_Initialize','_Simulate','_GetParticleCount','_GetParticlePositions', '_GetGridXDimension', '_GetGridYDimension', '_GetGridZDimension', '_malloc', '_free']"
+    )
+
+endif()

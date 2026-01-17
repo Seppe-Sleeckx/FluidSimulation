@@ -6,6 +6,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client", "@webgpu/types"],
     "skipLibCheck": true,
+    "allowJs": true, //needed for our .js glue script
 
     /* Bundler mode */
     "moduleResolution": "bundler",

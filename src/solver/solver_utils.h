@@ -16,9 +16,9 @@ namespace Solver_Utils
     struct Weight3D
     {
         std::array<float, 27> w;    //weights
-        std::array<int, 27> ox; //neighbour offsets in x
-        std::array<int, 27> oy; //neighbour offsets in y
-        std::array<int, 27> oz; //neighbour offsets in z
+        std::array<int, 27> offsetsX; //neighbour offsets in x
+        std::array<int, 27> offsetsY; //neighbour offsets in y
+        std::array<int, 27> offsetsZ; //neighbour offsets in z
     };
 
     enum class CellType : uint8_t {
@@ -29,6 +29,7 @@ namespace Solver_Utils
 
     static Eigen::Vector3f BSplineWeights(float f)
     {
+        f = std::clamp(f, 0.0f, 1.0f);
         Eigen::Vector3f w;
 
         w[0] = 0.5f * (1.5f - f) * (1.5f - f); //left node
@@ -53,9 +54,9 @@ namespace Solver_Utils
                 for (int i = 0; i < 3; ++i)  //x
                 {
                     out.w[idx] = wx[i] * wy[j] * wz[k];
-                    out.ox[idx] = i - 1;     //neighbors: -1, 0, +1
-                    out.oy[idx] = j - 1;
-                    out.oz[idx] = k - 1;
+                    out.offsetsX[idx] = i - 1;     //neighbors: -1, 0, +1
+                    out.offsetsY[idx] = j - 1;
+                    out.offsetsZ[idx] = k - 1;
                     idx++;
                 }
             }

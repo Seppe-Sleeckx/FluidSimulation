@@ -41,3 +41,24 @@ const float* GetParticlePositions(FLIPSolverHandle solver)
 		return nullptr;
 	return static_cast<FLIPSolver*>(solver)->GetParticlePositions().data();
 }
+
+const int GetGridXDimension(FLIPSolverHandle solver)
+{
+	if (!solver)
+		return 0;
+	return static_cast<FLIPSolver*>(solver)->GetGridXDimension();
+}
+
+const int GetGridYDimension(FLIPSolverHandle solver)
+{
+	if (!solver)
+		return 0;
+	return static_cast<FLIPSolver*>(solver)->GetGridYDimension();
+}
+
+const int GetGridZDimension(FLIPSolverHandle solver)
+{
+	if (!solver)
+		return 0;
+	return static_cast<FLIPSolver*>(solver)->GetGridZDimension();
+}

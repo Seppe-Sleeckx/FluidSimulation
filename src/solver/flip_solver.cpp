@@ -2,107 +2,161 @@
 #include <limits>
 using namespace Solver_Utils;
 
+//DEBUG
+#include <iostream>
+
 FLIPSolver::FLIPSolver(const SolverConfig& config) :
-	m_cellNumX{config.gridX},
-	m_cellNumY{config.gridY},
-	m_cellNumZ{config.gridZ},
-	m_numParticles{config.numParticles},
-	m_particleRadius{config.particleRadius},
-	m_gridV{m_cellNumX, m_cellNumY, m_cellNumZ, 3},
-	m_gridVBefore{ m_cellNumX, m_cellNumY, m_cellNumZ, 3 },
-	m_gridVAfter{ m_cellNumX, m_cellNumY, m_cellNumZ, 3 },
-	m_gridWeight{ m_cellNumX, m_cellNumY, m_cellNumZ },
+	m_cellNumX{ config.gridX },
+	m_cellNumY{ config.gridY },
+	m_cellNumZ{ config.gridZ },
+	m_numParticles{ config.numParticles },
+	m_particleRadius{ config.particleRadius },
+
+	m_gridVU{ m_cellNumX + 1, m_cellNumY,     m_cellNumZ },
+	m_gridVV{ m_cellNumX,     m_cellNumY + 1, m_cellNumZ },
+	m_gridVW{ m_cellNumX,     m_cellNumY,     m_cellNumZ + 1 },
+
+	m_gridVUBefore{ m_cellNumX + 1, m_cellNumY,     m_cellNumZ },
+	m_gridVVBefore{ m_cellNumX,     m_cellNumY + 1, m_cellNumZ },
+	m_gridVWBefore{ m_cellNumX,     m_cellNumY,     m_cellNumZ + 1 },
+
+	m_gridVUAfter{ m_cellNumX + 1, m_cellNumY,     m_cellNumZ },
+	m_gridVVAfter{ m_cellNumX,     m_cellNumY + 1, m_cellNumZ },
+	m_gridVWAfter{ m_cellNumX,     m_cellNumY,     m_cellNumZ + 1 },
+
+	m_gridWeightU{ m_cellNumX + 1, m_cellNumY,     m_cellNumZ },
+	m_gridWeightV{ m_cellNumX,     m_cellNumY + 1, m_cellNumZ },
+	m_gridWeightW{ m_cellNumX,     m_cellNumY,     m_cellNumZ + 1 },
+
 	m_gridPressure{ m_cellNumX, m_cellNumY, m_cellNumZ },
 	m_gridDivergence{ m_cellNumX, m_cellNumY, m_cellNumZ },
-	m_gridCellType{m_cellNumX, m_cellNumY, m_cellNumZ},
-	m_particlePos{m_numParticles, 3},
-	m_particleV{m_numParticles, 3}
+	m_gridDensity{ m_cellNumX, m_cellNumY, m_cellNumZ },
+	m_gridCellType{ m_cellNumX, m_cellNumY, m_cellNumZ },
+	m_particlePos(m_numParticles, 3),
+	m_particleV(m_numParticles, 3)
 {
+	m_particleV.setZero();
 }
 
 void FLIPSolver::Initialize()
 {
-	m_gridV.setZero();
-	m_gridVBefore.setZero();
-	m_gridVAfter.setZero();
-	m_gridWeight.setZero();
-	m_gridPressure.setZero();
-	m_gridDivergence.setZero();
-
-	//Reset all cells to air, !!this will keep solid cells the same
-	for (int x = 0; x < m_cellNumX; ++x){
-		for (int y = 0; y < m_cellNumY; ++y) {
-			for (int z = 0; z < m_cellNumZ; ++z){
-				if(m_gridCellType(x,y,z) != CellType::Solid)
-					m_gridCellType(x, y, z) = CellType::Air;
-			}
-		}
-	}
-	
-	//spawn particles, Temp for debugging
-	int idx = 0;
-	for (int y = m_cellNumY - 1; y >= 0 && idx < m_numParticles; --y) //start at the top
+	for (size_t p = 0; p < m_numParticles; p++)
 	{
-		for (int x = 0; x < m_cellNumX && idx < m_numParticles; ++x)
-		{
-			for (int z = 0; z < m_cellNumZ && idx < m_numParticles; ++z)
-			{
-				// Place particle at cell center
-				m_particlePos.row(idx) = Eigen::Vector3f(
-					x + 0.5f,
-					y + 0.5f,
-					z + 0.5f
-				);
-
-				m_particleV.row(idx).setZero();
-
-				++idx;
-			}
-		}
+		m_particlePos.row(p) = Eigen::Vector3f(p * .01f, 5, p * .02f);
 	}
 
+	m_gridCellType.setConstant(CellType::Air); //start all cells at air, maybe change later to be configurable
+
+	ClearGrid();
+	MarkFluidCells();
 }
 
 void FLIPSolver::Simulate(float dt)
 {
-	//1. clear grid
+	//Advection step
+	IntegrateParticles(dt);
+	ResolveParticleCollisions(); //make sure particles stay inside the domain
+
+	//clear grid
 	ClearGrid();
 
-	//2. Particle velocity to grid (P2G)
+	//mark cells with particles inside as fluid cells, leave solid cells untouched
+	MarkFluidCells();
+
+	//Particle velocity to grid (P2G)
 	TransferP2G();
 
-	//3 Save grid velocities (Only necessary for FLIP)
+	//Save grid velocities (Only necessary for FLIP)
 	SaveGridBefore();
 
-	//4 Apply external forces (gravity)
+	//Apply external forces (gravity)
 	ApplyGravity(dt);
 
-	//5. Solve for incompressibility (only applicable for fluids, not gasses)
-	ComputeDivergence();
-	SolvePressure(40);
-	ProjectVelocity();
 
-	//6. Enforce boundaries
-	ApplyGridBoundaryConditions();
+	UpdateParticleDensity();
 
-	//7. store grid velocity after projection (Only necessary for FLIP)
+	//Solve for incompressibility (only applicable for fluids, not gasses)
+	SolveIncompressibility(dt, 40);
+
+	//store grid velocity after projection (Only necessary for FLIP)
 	SaveGridAfter();
 
-	//8. Grid to particle (G2P)
+	//Grid to particle (G2P)
 	TransferG2P();
-
-	//9. Advection step
-	IntegrateParticles(dt);
 }
 
 void FLIPSolver::ClearGrid()
 {
-	m_gridV.setZero();
-	m_gridVBefore.setZero();
-	m_gridVAfter.setZero();
-	m_gridWeight.setZero();
+	m_gridVU.setZero();
+	m_gridVV.setZero();
+	m_gridVW.setZero();
+
+	m_gridVUBefore.setZero();
+	m_gridVVBefore.setZero();
+	m_gridVWBefore.setZero();
+
+	m_gridVUAfter.setZero();
+	m_gridVVAfter.setZero();
+	m_gridVWAfter.setZero();
+
+	m_gridWeightU.setZero();
+	m_gridWeightV.setZero();
+	m_gridWeightW.setZero();
+
 	m_gridPressure.setZero();
 	m_gridDivergence.setZero();
+}
+
+void FLIPSolver::MarkFluidCells() {
+	for (int x = 0; x < m_cellNumX; ++x) {
+		for (int y = 0; y < m_cellNumY; ++y) {
+			for (int z = 0; z < m_cellNumZ; ++z)
+			{
+				if (m_gridCellType(x, y, z) != CellType::Solid)
+					m_gridCellType(x, y, z) = CellType::Air; //set all non solid cells to air
+			}
+		}
+	}
+
+	for (int p = 0; p < m_numParticles; ++p)
+	{
+		const Eigen::Vector3f& pos = m_particlePos.row(p);
+
+		int ix, iy, iz;
+		Eigen::Vector3f f;
+		ComputeCellCoordinates(pos, ix, iy, iz, f);
+
+		if (m_gridCellType(ix, iy, iz) != CellType::Solid)
+			m_gridCellType(ix, iy, iz) = CellType::Fluid; //mark all cells with particles inside as fluid (except for solid cells)
+	}
+
+	//DEBUG:
+	//constexpr auto cellTypeToString = [](CellType type) -> const char* {
+	//	switch (type)
+	//	{
+	//	case CellType::Air:   return "Air";
+	//	case CellType::Fluid: return "Fluid";
+	//	case CellType::Solid: return "Solid";
+	//	default:              return "-";
+	//	}
+	//	};
+	//for (int x = 0; x < m_cellNumX; ++x) {
+	//	for (int y = 0; y < m_cellNumY; ++y) {
+	//		for (int z = 0; z < m_cellNumZ; ++z)
+	//		{
+	//			auto type = m_gridCellType(x, y, z);
+	//			std::cout << "CELL{" << x << ',' << y << ',' << z << "} has type " << cellTypeToString(type) << '\n';
+	//		}
+	//	}
+	//}
+}
+
+void FLIPSolver::IntegrateParticles(float dt)
+{
+	for (int i = 0; i < m_numParticles; ++i)
+	{
+		m_particlePos.row(i) += dt * m_particleV.row(i); //update positions
+	}
 }
 
 void FLIPSolver::TransferP2G()
@@ -112,52 +166,336 @@ void FLIPSolver::TransferP2G()
 		const Eigen::Vector3f pos = m_particlePos.row(p);
 		const Eigen::Vector3f vel = m_particleV.row(p);
 
-		//base cell idx + fractional offset (f) inside cell
-		int ix, iy, iz;
-		Eigen::Vector3f f;
-		ComputeCellCoordinates(pos, ix, iy, iz, f);
+		{//X faces
+			Eigen::Vector3f uPos = pos;
 
-		//Calulcate weights
-		Solver_Utils::Weight3D W;
-		Solver_Utils::ComputeBSplineWeights(f, W);
+			//base cell idx + fractional offset (f) inside cell
+			int ix, iy, iz;
+			Eigen::Vector3f f;
+			ComputeCellCoordinates(uPos, ix, iy, iz, f);
 
-		//Scatter particle velocity to grid (27 neighbours)
-		for (int n = 0; n < 27; ++n)
-		{
-			const int gridX = ix + W.ox[n];
-			const int gridY = iy + W.oy[n];
-			const int gridZ = iz + W.oz[n];
+			//Calulcate weights
+			Solver_Utils::Weight3D W;
+			Solver_Utils::ComputeBSplineWeights(f, W);
 
-			//bounds check
-			if (gridX < 0 || gridX >= m_cellNumX ||
-				gridY < 0 || gridY >= m_cellNumY ||
-				gridZ < 0 || gridZ >= m_cellNumZ)
-				continue;
+			//Scatter particle velocity to grid (27 neighbours)
+			for (int n = 0; n < 27; ++n)
+			{
+				const int gridX = ix + W.offsetsX[n];
+				const int gridY = iy + W.offsetsY[n];
+				const int gridZ = iz + W.offsetsZ[n];
+
+				//bounds check
+				if (gridX < 0 || gridX >= m_cellNumX + 1 ||
+					gridY < 0 || gridY >= m_cellNumY ||
+					gridZ < 0 || gridZ >= m_cellNumZ)
+					continue;
 
 
-			const float w = W.w[n];
+				const float w = W.w[n];
 
-			//accumulate weight
-			m_gridWeight(gridX, gridY, gridZ) += w;
+				//accumulate weight
+				m_gridWeightU(gridX, gridY, gridZ) += w;
 
-			//accumulate weighted velocity
-			m_gridV(gridX, gridY, gridZ, 0) += w * vel.x();
-			m_gridV(gridX, gridY, gridZ, 1) += w * vel.y();
-			m_gridV(gridX, gridY, gridZ, 2) += w * vel.z();
+				//accumulate weighted velocity
+				m_gridVU(gridX, gridY, gridZ) += w * vel.x();
+			}
+		}
+
+		{//Y faces
+			Eigen::Vector3f vPos = pos;
+
+			//base cell idx + fractional offset (f) inside cell
+			int ix, iy, iz;
+			Eigen::Vector3f f;
+			ComputeCellCoordinates(vPos, ix, iy, iz, f);
+
+			//Calulcate weights
+			Solver_Utils::Weight3D W;
+			Solver_Utils::ComputeBSplineWeights(f, W);
+
+			//Scatter particle velocity to grid (27 neighbours)
+			for (int n = 0; n < 27; ++n)
+			{
+				const int gridX = ix + W.offsetsX[n];
+				const int gridY = iy + W.offsetsY[n];
+				const int gridZ = iz + W.offsetsZ[n];
+
+				//bounds check
+				if (gridX < 0 || gridX >= m_cellNumX ||
+					gridY < 0 || gridY >= m_cellNumY + 1 ||
+					gridZ < 0 || gridZ >= m_cellNumZ)
+					continue;
+
+
+				const float w = W.w[n];
+
+				//accumulate weight
+				m_gridWeightV(gridX, gridY, gridZ) += w;
+
+				//accumulate weighted velocity
+				m_gridVV(gridX, gridY, gridZ) += w * vel.y();
+			}
+		}
+
+		{//Z faces
+			Eigen::Vector3f uPos = pos;
+
+			//base cell idx + fractional offset (f) inside cell
+			int ix, iy, iz;
+			Eigen::Vector3f f;
+			ComputeCellCoordinates(uPos, ix, iy, iz, f);
+
+			//Calulcate weights
+			Solver_Utils::Weight3D W;
+			Solver_Utils::ComputeBSplineWeights(f, W);
+
+			//Scatter particle velocity to grid (27 neighbours)
+			for (int n = 0; n < 27; ++n)
+			{
+				const int gridX = ix + W.offsetsX[n];
+				const int gridY = iy + W.offsetsY[n];
+				const int gridZ = iz + W.offsetsZ[n];
+
+				//bounds check
+				if (gridX < 0 || gridX >= m_cellNumX ||
+					gridY < 0 || gridY >= m_cellNumY ||
+					gridZ < 0 || gridZ >= m_cellNumZ + 1)
+					continue;
+
+
+				const float w = W.w[n];
+
+				//accumulate weight
+				m_gridWeightW(gridX, gridY, gridZ) += w;
+
+				//accumulate weighted velocity
+				m_gridVW(gridX, gridY, gridZ) += w * vel.z();
+			}
+		}
+	}
+
+	for (int x = 0; x < m_cellNumX + 1; ++x) { //Normalize grid velocities on X (U) faces
+		for (int y = 0; y < m_cellNumY; ++y) {
+			for (int z = 0; z < m_cellNumZ; ++z) {
+				if (m_gridWeightU(x, y, z) > 0.0f)
+					m_gridVU(x, y, z) /= m_gridWeightU(x, y, z);
+			}
+		}
+	}
+
+	for (int x = 0; x < m_cellNumX; ++x) {
+		for (int y = 0; y < m_cellNumY + 1; ++y) {//Normalize grid velocities on Y (V) faces
+			for (int z = 0; z < m_cellNumZ; ++z) {
+				if (m_gridWeightV(x, y, z) > 0.0f)
+					m_gridVV(x, y, z) /= m_gridWeightV(x, y, z);
+			}
+		}
+	}
+
+	for (int x = 0; x < m_cellNumX; ++x) {
+		for (int y = 0; y < m_cellNumY; ++y) {
+			for (int z = 0; z < m_cellNumZ + 1; ++z) { //Normalize grid velocities on Z (W) faces
+				if (m_gridWeightW(x, y, z) > 0.0f)
+					m_gridVW(x, y, z) /= m_gridWeightW(x, y, z);
+			}
 		}
 	}
 }
 
 void FLIPSolver::SaveGridBefore()
 {
-	m_gridVBefore = m_gridV; //copy gridvelocities for later use
+	m_gridVUBefore = m_gridVU; //copy gridvelocities for later use
+	m_gridVVBefore = m_gridVV;
+	m_gridVWBefore = m_gridVW;
 }
 
 void FLIPSolver::ApplyGravity(float dt)
 {
-	for (int i = 0; i < m_numParticles; ++i)
+	//Note: we apply gravity to our cells, not our particles!
+	//X faces
+	for (int x = 0; x < m_cellNumX + 1; ++x) {
+		for (int y = 0; y < m_cellNumY; ++y) {
+			for (int z = 0; z < m_cellNumZ; ++z)
+			{
+				if ((x > 0 && m_gridCellType(x - 1, y, z) == CellType::Fluid) || (x < m_cellNumX && m_gridCellType(x, y, z) == CellType::Fluid))
+					m_gridVU(x, y, z) += dt * m_gravity.x();
+			}
+		}
+	}
+
+	//Y faces
+	for (int x = 0; x < m_cellNumX; ++x) {
+		for (int y = 1; y < m_cellNumY + 1; ++y) {
+			for (int z = 0; z < m_cellNumZ; ++z)
+			{
+				if ((y > 0 && m_gridCellType(x, y - 1, z) == CellType::Fluid) || (y < m_cellNumY && m_gridCellType(x, y, z) == CellType::Fluid))
+					m_gridVV(x, y, z) += dt * m_gravity.y();
+			}
+		}
+	}
+
+	//Z faces
+	for (int x = 0; x < m_cellNumX; ++x) {
+		for (int y = 0; y < m_cellNumY; ++y) {
+			for (int z = 1; z < m_cellNumZ + 1; ++z)
+			{
+				if ((z > 0 && m_gridCellType(x, y, z - 1) == CellType::Fluid) || (z < m_cellNumZ && m_gridCellType(x, y, z) == CellType::Fluid))
+					m_gridVW(x, y, z) += dt * m_gravity.z();
+			}
+		}
+	}
+
+	//Gravity applied directly to particles
+	//for (int p = 0; p < m_numParticles; p++)
+	//{
+	//	m_particleV.row(p) += m_gravity * dt;
+	//}
+}
+
+void FLIPSolver::UpdateParticleDensity()
+{
+	m_gridDensity.setZero();
+
+	const float& h = m_CellSize;
+	const float h2 = m_CellSize * 0.5f;
+
+	for (int p = 0; p < m_numParticles; ++p) //calculate grid density
 	{
-		m_particleV.row(i) += dt * m_gravity.transpose(); //apply gravity
+		Eigen::Vector3f pos = m_particlePos.row(p);
+
+		//from world pos to local pos
+		Eigen::Vector3f localOffset;
+		int ix, iy, iz;
+
+		ComputeCellCoordinates(pos, ix, iy, iz, localOffset);
+
+
+		//Compute neighbour weights
+		Solver_Utils::Weight3D W;
+		Solver_Utils::ComputeBSplineWeights(localOffset, W);
+
+		for (int n = 0; n < 27; ++n)
+		{
+			int gridX = ix + W.offsetsX[n];
+			int gridY = iy + W.offsetsY[n];
+			int gridZ = iz + W.offsetsZ[n];
+
+			//ignore cells out of bounds
+			if (gridX < 0 || gridX >= m_cellNumX ||
+				gridY < 0 || gridY >= m_cellNumY ||
+				gridZ < 0 || gridZ >= m_cellNumZ)
+				continue;
+
+			//ignore air cell contributions
+			if (m_gridCellType(gridX, gridY, gridZ) == Solver_Utils::CellType::Air)
+				continue;
+
+			m_gridPressure(gridX, gridY, gridZ) += W.w[n];
+		}
+	}
+
+	if (m_particleRestDensity == 0.0f)
+	{
+		float sum = 0.0f;
+		int numFluidCells = 0;
+		for (int x = 0; x < m_cellNumX; ++x) {
+			for (int y = 0; y < m_cellNumY; ++y) {
+				for (int z = 0; z < m_cellNumZ; ++z)
+				{
+					if (m_gridCellType(x, y, z) == Solver_Utils::CellType::Fluid)
+					{
+						sum += m_gridDensity(x, y, z);
+						numFluidCells++;
+					}
+				}
+			}
+		}
+
+		if (numFluidCells > 0)
+			m_particleRestDensity = sum / numFluidCells;
+	}
+}
+
+void FLIPSolver::SolveIncompressibility(float dt, int iterations)
+{
+	//Gauss Seidel (use PCG later when more time)
+	constexpr float overrelaxation = 1.6f; //use overrelaxation to converge faster, 1.0 == default gauss Seidel
+
+	m_gridPressure.setZero();
+	m_gridVUAfter = m_gridVU;
+	m_gridVVAfter = m_gridVV;
+	m_gridVWAfter = m_gridVW;
+
+	float pressureCoefficient = (1.0f * m_CellSize) / dt; //1.0f is our fluid density
+	
+
+	auto IsSolidOrOutOfBounds = [&](int x, int y, int z) -> bool {
+		if (x < 0 || x >= m_cellNumX ||
+			y < 0 || y >= m_cellNumY ||
+			z < 0 || z >= m_cellNumZ)
+			return true;
+
+		return m_gridCellType(x, y, z) == CellType::Solid;
+		};
+
+	for (int iter = 0; iter < iterations; iter++)
+	{
+		ComputeDivergence();
+		for (int x = 0; x < m_cellNumX; x++) {
+			for (int y = 0; y < m_cellNumY; y++) {
+				for (int z = 0; z < m_cellNumZ; z++)
+				{
+					if (m_gridCellType(x, y, z) != CellType::Fluid)
+						continue;
+
+					//Check if we have any neighbours that aren't solid/out of bounds
+					bool solidX0 = IsSolidOrOutOfBounds(x - 1, y, z);
+					bool solidX1 = IsSolidOrOutOfBounds(x + 1, y, z);
+					bool solidY0 = IsSolidOrOutOfBounds(x, y - 1, z);
+					bool solidY1 = IsSolidOrOutOfBounds(x, y + 1, z);
+					bool solidZ0 = IsSolidOrOutOfBounds(x, y, z - 1);
+					bool solidZ1 = IsSolidOrOutOfBounds(x, y, z + 1);
+
+					//we need to know how many valid neighbours we have to know in how many direction we can push our pressure can push our fluid, converting bool to int (kinda ugly but works)
+					int numValidNeighbours = (!solidX0) + (!solidX1) + (!solidY0) + (!solidY1) + (!solidZ0) + (!solidZ1);
+
+					if (numValidNeighbours == 0)
+						continue; //no usable neighbours
+
+					//if (m_particleRestDensity > 0.0f) //TEST THIS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+					//{
+					//	float compression =
+					//		/* particle density */ 1.0f - m_particleRestDensity;
+					//
+					//	if (compression > 0.0f)
+					//		m_gridDivergence(x,y,z) -= compression;
+					//}
+					
+					
+					float pressure = -m_gridDivergence(x, y, z) / numValidNeighbours;
+					pressure *= overrelaxation; //we use overrelaxation to converge faster with less iterations
+
+					m_gridPressure(x, y, z) +=  pressure;
+
+					//x
+					if(!solidX0)
+						m_gridVU(x, y, z) -= pressure;
+					if(!solidX1)
+						m_gridVU(x + 1, y, z) += pressure;
+					//y
+					if(!solidY0)
+						m_gridVV(x, y, z) -= pressure;
+					if(!solidY1)
+						m_gridVV(x, y + 1, z) += pressure;
+					//z
+					if(!solidZ0)
+						m_gridVW(x, y, z) -= pressure;
+					if(!solidZ1)
+						m_gridVW(x, y, z + 1) += pressure;
+				}
+			}
+		}
 	}
 }
 
@@ -177,285 +515,316 @@ void FLIPSolver::ComputeDivergence()
 
 				float divergence = 0.f;
 
-				//X out (+)
-				if ((x + 1 < m_cellNumX) && m_gridCellType(x + 1, y, z) != CellType::Solid)
-					divergence += m_gridV(x + 1, y, z, 0);
+				auto IsFluidCell = [&](int x, int y, int z){
+						if (x < 0 || x >= m_cellNumX ||
+							y < 0 || y >= m_cellNumY ||
+							z < 0 || z >= m_cellNumZ)
+							return false;
 
-				//X in (-)
-				if (m_gridCellType(x, y, z) != CellType::Solid)
-					divergence -= m_gridV(x, y, z, 0);
-
-				//Y out (+)
-				if ((y + 1 < m_cellNumY) && m_gridCellType(x, y + 1, z) != CellType::Solid)
-					divergence += m_gridV(x, y + 1, z, 1);
-
-				//Y in (-)
-				if (m_gridCellType(x, y, z) != CellType::Solid)
-					divergence -= m_gridV(x, y, z, 1);
-
-				//Z out (+)
-				if ((z + 1 < m_cellNumZ) && m_gridCellType(x, y, z + 1) != CellType::Solid)
-					divergence += m_gridV(x, y, z + 1, 2);
-
-				//Z in (-)
-				if (m_gridCellType(x, y, z) != CellType::Solid)
-					divergence -= m_gridV(x, y, z, 2);
-
-
-
-				m_gridDivergence(x, y, z) = divergence;
-			}
-		}
-	}
-}
-
-void FLIPSolver::SolvePressure(int iterations)
-{
-	//Gauss Seidel (use PCG later when more time)
-	m_gridPressure.setZero();
-
-	for (int i = 0; i < iterations; i++)
-	{
-		for (int x = 0; x < m_cellNumX; x++) {
-			for (int y = 0; y < m_cellNumY; y++) {
-				for (int z = 0; z < m_cellNumZ; z++)
-				{
-					if (m_gridCellType(x, y, z) != CellType::Fluid)
-						continue;
-
-					float sum = 0.f;
-					int count = 0;
-
-					auto addNeighbor = [&](int nx, int ny, int nz)
-						{
-							if (nx < 0 || nx >= m_cellNumX ||
-								ny < 0 || ny >= m_cellNumY ||
-								nz < 0 || nz >= m_cellNumZ)
-								return;
-
-							if (m_gridCellType(nx, ny, nz) == CellType::Solid)
-								return;
-
-							sum += m_gridPressure(nx, ny, nz);
-							count++;
-						};
-
-					addNeighbor(x + 1, y, z);
-					addNeighbor(x - 1, y, z);
-					addNeighbor(x, y + 1, z);
-					addNeighbor(x, y - 1, z);
-					addNeighbor(x, y, z + 1);
-					addNeighbor(x, y, z - 1);
-
-					if (count > 0)
-					{
-						m_gridPressure(x, y, z) = (sum - m_gridDivergence(x, y, z)) / float(count);
-					}
-				}
-			}
-		}
-	}
-}
-
-void FLIPSolver::ProjectVelocity()
-{
-	for (int x = 0; x < m_cellNumX; x++) {
-		for (int y = 0; y < m_cellNumY; y++) {
-			for (int z = 0; z < m_cellNumZ; z++)
-			{
-				if (m_gridCellType(x, y, z) != CellType::Fluid)
-					continue;
+						return m_gridCellType(x, y, z) == CellType::Fluid;
+					};
 
 				//X
-				if (x + 1 < m_cellNumX && m_gridCellType(x + 1, y, z) != CellType::Solid)
-				{
-					//pressureGradient = gridpressure_neighbour - gridpressure_current
-					float pressureGradient = m_gridPressure(x + 1, y, z) - m_gridPressure(x, y, z);
-					m_gridV(x, y, z, 0) -= pressureGradient;
-				}
+				if(IsFluidCell(x+1, y, z)) //left neighbour
+					divergence += m_gridVU(x + 1, y, z);	//right face
+				if(IsFluidCell(x - 1, y, z)) //right neigbour
+					divergence -= m_gridVU(x, y, z); //left face, not x - 1 because staggered grid
 
 				//Y
-				if (y + 1 < m_cellNumY && m_gridCellType(x, y + 1, z) != CellType::Solid)
-				{
-					float pressureGradient = m_gridPressure(x, y + 1, z) - m_gridPressure(x, y, z);
-					m_gridV(x, y, z, 1) -= pressureGradient;
-				}
+				if(IsFluidCell(x, y + 1, z)) //top neigbour
+					divergence += m_gridVV(x, y + 1, z);	//up face
+				if(IsFluidCell(x, y - 1, z)) //bottom neighbour
+					divergence -= m_gridVV(x, y, z);	//down face
 
 				//Z
-				if (z + 1 < m_cellNumZ && m_gridCellType(x, y, z + 1) != CellType::Solid)
-				{
-					float pressureGradient = m_gridPressure(x, y, z + 1) - m_gridPressure(x, y, z);
-					m_gridV(x, y, z, 2) -= pressureGradient;
-				}
+				if(IsFluidCell(x, y, z + 1)) //back neighbour
+					divergence += m_gridVW(x, y, z + 1); //back face
+				if(IsFluidCell(x, y, z)) //front neighbour
+					divergence -= m_gridVW(x, y, z);	//front face
+
+
+				m_gridDivergence(x, y, z) = divergence * inverseGridSpacing();
 			}
 		}
 	}
 }
 
-void FLIPSolver::ApplyGridBoundaryConditions()
+void FLIPSolver::ResolveParticleCollisions()
 {
-	//1. Set velocities to zero inside solid cells
-	for (int x = 0; x < m_cellNumX; ++x)
+	//bounds in world space
+	const float xMin = m_particleRadius;
+	const float xMax = (m_cellNumX - 1) * m_CellSize - m_particleRadius;
+	const float yMin = m_particleRadius;
+	const float yMax = (m_cellNumY - 1) * m_CellSize - m_particleRadius;
+	const float zMin = m_particleRadius;
+	const float zMax = (m_cellNumZ - 1) * m_CellSize - m_particleRadius;
+
+	for (int p = 0; p < m_numParticles; p++)
 	{
-		for (int y = 0; y < m_cellNumY; ++y)
-		{
-			for (int z = 0; z < m_cellNumZ; ++z)
-			{
-				if (m_gridCellType(x, y, z) == CellType::Solid)
-				{
-					m_gridV(x, y, z, 0) = 0.0f;
-					m_gridV(x, y, z, 1) = 0.0f;
-					m_gridV(x, y, z, 2) = 0.0f;
-				}
-			}
+		Eigen::Ref<Eigen::RowVector3f> particle_p = m_particlePos.row(p).transpose();	//Eigen::ref prevents a copy and is writable, need to use rowVector3f since m_particlePos is rowMajor
+		Eigen::Ref<Eigen::RowVector3f> particle_v = m_particleV.row(p).transpose(); //need to transpose because m_particleV is rowMajor, and Vector3f is a column vector
+		//transpose does NOT return a copy, it returns a view that references our original (rowMajor) velocity/position
+
+		//x
+		if (particle_p.x() < xMin) {
+			particle_p.x() = xMin;
+			particle_v.x() = 0.0f;
 		}
-	}
-
-
-	//2. Prevent flow into solid neighbours
-	for (int x = 0; x < m_cellNumX; ++x)
-	{
-		for (int y = 0; y < m_cellNumY; ++y)
-		{
-			for (int z = 0; z < m_cellNumZ; ++z)
-			{
-				if (m_gridCellType(x, y, z) != CellType::Fluid)
-					continue;
-
-
-				//X out (+)
-				if (x + 1 < m_cellNumX && m_gridCellType(x + 1, y, z) == CellType::Solid)
-					m_gridV(x, y, z, 0) = std::min(0.0f, m_gridV(x, y, z, 0));
-
-				//X in (-)
-				if (x > 0 && m_gridCellType(x - 1, y, z) == CellType::Solid)
-					m_gridV(x, y, z, 0) = std::max(0.0f, m_gridV(x, y, z, 0));
-
-				//Y out (+)
-				if (y + 1 < m_cellNumY && m_gridCellType(x, y + 1, z) == CellType::Solid)
-					m_gridV(x, y, z, 1) = std::min(0.0f, m_gridV(x, y, z, 1));
-
-				//Y in (-)
-				if (y > 0 && m_gridCellType(x, y - 1, z) == CellType::Solid)
-					m_gridV(x, y, z, 1) = std::max(0.0f, m_gridV(x, y, z, 1));
-				
-				//Z out (+)
-				if (z + 1 < m_cellNumZ && m_gridCellType(x, y, z + 1) == CellType::Solid)
-					m_gridV(x, y, z, 2) = std::min(0.0f, m_gridV(x, y, z, 2));
-
-				//Z in (-)
-				if (z > 0 && m_gridCellType(x, y, z - 1) == CellType::Solid)
-					m_gridV(x, y, z, 2) = std::max(0.0f, m_gridV(x, y, z, 2));
-			}
+		else if (particle_p.x() > xMax) {
+			particle_p.x() = xMax;
+			particle_v.x() = 0.0f;
 		}
-	}
 
-
-	//3. Enforce grid edge boundaries 
-
-	//X boundaries
-	for (int y = 0; y < m_cellNumY; ++y)
-	{
-		for (int z = 0; z < m_cellNumZ; ++z)
-		{
-			m_gridV(0, y, z, 0) = 0.f;
-			m_gridV(m_cellNumX - 1, y, z, 0) = 0.f;
+		//y
+		if (particle_p.y() < yMin) {
+			particle_p.y() = yMin;
+			particle_v.y() = 0.0f;
 		}
-	}
-
-	//Y boundaries
-	for (int x = 0; x < m_cellNumX; ++x)
-	{
-		for (int z = 0; z < m_cellNumZ; ++z)
-		{
-			m_gridV(x, 0, z, 1) = 0.f;
-			m_gridV(x, m_cellNumY - 1, z, 1) = 0.f;
+		else if (particle_p.y() > yMax) {
+			particle_p.y() = yMax;
+			particle_v.y() = 0.0f;
 		}
-	}
 
-	//Z boundaries
-	for (int x = 0; x < m_cellNumX; ++x)
-	{
-		for (int y = 0; y < m_cellNumY; ++y)
-		{
-			m_gridV(x, y, 0, 2) = 0.f;
-			m_gridV(x, y, m_cellNumZ - 1, 2) = 0.f;
+		//z
+		if (particle_p.z() < zMin) {
+			particle_p.z() = zMin;
+			particle_v.z() = 0.0f;
+		}
+		else if (particle_p.z() > zMax) {
+			particle_p.z() = zMax;
+			particle_v.z() = 0.0f;
 		}
 	}
 }
 
 void FLIPSolver::SaveGridAfter()
 {
-	m_gridVAfter = m_gridV; //copy gridvelocities for later use
+	m_gridVUAfter = m_gridVU; //copy gridvelocities for later use
+	m_gridVVAfter = m_gridVV;
+	m_gridVWAfter = m_gridVW;
 }
 
 void FLIPSolver::TransferG2P()
 {
 	for (int p = 0; p < m_numParticles; ++p)
 	{
-		const Eigen::Vector3f pos = m_particlePos.row(p);
-
-		//base cell idx + fractional offset (f) inside cell
-		int ix, iy, iz;
-		Eigen::Vector3f f;
-		ComputeCellCoordinates(pos, ix, iy, iz, f);
-
-		//Compute 27 B-spline weights
-		Solver_Utils::Weight3D W;
-		Solver_Utils::ComputeBSplineWeights(f, W);
+		const Eigen::Vector3f pos = m_particlePos.row(p).transpose();
 
 		Eigen::Vector3f picVelocity(0.0f, 0.0f, 0.0f);
-		Eigen::Vector3f flipDelta(0.0f, 0.0f, 0.0f);
+		Eigen::Vector3f flipVelocity(0.0f, 0.0f, 0.0f);
 
-		//get from grid
-		for (int n = 0; n < 27; ++n)
-		{
-			const int gridX = ix + W.ox[n];
-			const int gridY = iy + W.oy[n];
-			const int gridZ = iz + W.oz[n];
+		{//X faces
+			Eigen::Vector3f uPos = pos;
 
-			//bounds check
-			if (gridX < 0 || gridX >= m_cellNumX ||
-				gridY < 0 || gridY >= m_cellNumY ||
-				gridZ < 0 || gridZ >= m_cellNumZ)
-				continue;
 
-			const float w = W.w[n];
-			const float gridW = m_gridWeight(gridX, gridY, gridZ);
+			//base cell idx + fractional offset (f) inside cell
+			int ix, iy, iz;
+			Eigen::Vector3f f;
+			ComputeCellCoordinates(uPos, ix, iy, iz, f);
 
-			if (gridW < std::numeric_limits<float>::epsilon())
-				continue; //continue
+			//Compute 27 B-spline weights
+			Solver_Utils::Weight3D W;
+			Solver_Utils::ComputeBSplineWeights(f, W);
 
-			//normalized grid velocity
-			Eigen::Vector3f gridVel(
-				m_gridV(gridX, gridY, gridZ, 0) / gridW,
-				m_gridV(gridX, gridY, gridZ, 1) / gridW,
-				m_gridV(gridX, gridY, gridZ, 2) / gridW
-			);
 
-			//PIC velocity contribution
-			picVelocity += w * gridVel;
+			float weightSum = 0.0f;
+			float picSum = 0.0f;
+			float flipSum = 0.0f;
 
-			//FLIP velocity delta
-			Eigen::Vector3f gridDelta(
-				(m_gridV(gridX, gridY, gridZ, 0) - m_gridVBefore(gridX, gridY, gridZ, 0)) / gridW,
-				(m_gridV(gridX, gridY, gridZ, 1) - m_gridVBefore(gridX, gridY, gridZ, 1)) / gridW,
-				(m_gridV(gridX, gridY, gridZ, 2) - m_gridVBefore(gridX, gridY, gridZ, 2)) / gridW
-			);
+			//get from grid
+			for (int n = 0; n < 27; ++n)
+			{
+				const int gridX = ix + W.offsetsX[n];
+				const int gridY = iy + W.offsetsY[n];
+				const int gridZ = iz + W.offsetsZ[n];
 
-			flipDelta += w * gridDelta;
+				//bounds check
+				if (gridX < 0 || gridX >= m_cellNumX + 1 ||
+					gridY < 0 || gridY >= m_cellNumY ||
+					gridZ < 0 || gridZ >= m_cellNumZ)
+					continue;
+
+				if (m_gridCellType(gridX, gridY, gridZ) == CellType::Air) //dont let air cells contribute
+					continue;
+
+				const float w = W.w[n];
+				const float vel = m_gridVU(gridX, gridY, gridZ);
+				const float velBefore = m_gridVUBefore(gridX, gridY, gridZ);
+
+				picSum += w * vel;
+				flipSum += w * (vel - velBefore);
+				weightSum += w;
+			}
+
+			if (weightSum > 0.0f)
+			{
+				picVelocity.x() = picSum / weightSum;
+				flipVelocity.x() = flipSum / weightSum;
+			}
 		}
 
+		{//Y faces
+			Eigen::Vector3f vPos = pos;
+
+
+			//base cell idx + fractional offset (f) inside cell
+			int ix, iy, iz;
+			Eigen::Vector3f f;
+			ComputeCellCoordinates(vPos, ix, iy, iz, f);
+
+			//Compute 27 B-spline weights
+			Solver_Utils::Weight3D W;
+			Solver_Utils::ComputeBSplineWeights(f, W);
+
+
+			float weightSum = 0.0f;
+			float picSum = 0.0f;
+			float flipSum = 0.0f;
+
+			//get from grid
+			for (int n = 0; n < 27; ++n)
+			{
+				const int gridX = ix + W.offsetsX[n];
+				const int gridY = iy + W.offsetsY[n];
+				const int gridZ = iz + W.offsetsZ[n];
+
+				//bounds check
+				if (gridX < 0 || gridX >= m_cellNumX ||
+					gridY < 0 || gridY >= m_cellNumY + 1 ||
+					gridZ < 0 || gridZ >= m_cellNumZ)
+					continue;
+
+
+				if (m_gridCellType(gridX, gridY, gridZ) == CellType::Air) //dont let air cells contribute
+					continue;
+
+				const float w = W.w[n];
+				const float vel = m_gridVV(gridX, gridY, gridZ);
+				const float velBefore = m_gridVVBefore(gridX, gridY, gridZ);
+
+				picSum += w * vel;
+				flipSum += w * (vel - velBefore);
+				weightSum += w;
+			}
+
+			if (weightSum > 0.0f)
+			{
+				picVelocity.y() = picSum / weightSum;
+				flipVelocity.y() = flipSum / weightSum;
+			}
+		}
+
+		{//Z faces
+			Eigen::Vector3f wPos = pos;
+
+			//base cell idx + fractional offset (f) inside cell
+			int ix, iy, iz;
+			Eigen::Vector3f f;
+			ComputeCellCoordinates(wPos, ix, iy, iz, f);
+
+			//Compute 27 B-spline weights
+			Solver_Utils::Weight3D W;
+			Solver_Utils::ComputeBSplineWeights(f, W);
+
+
+			float weightSum = 0.0f;
+			float picSum = 0.0f;
+			float flipSum = 0.0f;
+
+			//get from grid
+			for (int n = 0; n < 27; ++n)
+			{
+				const int gridX = ix + W.offsetsX[n];
+				const int gridY = iy + W.offsetsY[n];
+				const int gridZ = iz + W.offsetsZ[n];
+
+				//bounds check
+				if (gridX < 0 || gridX >= m_cellNumX ||
+					gridY < 0 || gridY >= m_cellNumY ||
+					gridZ < 0 || gridZ >= m_cellNumZ + 1)
+					continue;
+
+				if (m_gridCellType(gridX, gridY, gridZ) == CellType::Air) //dont let air cells contribute
+					continue;
+
+				const float w = W.w[n];
+				const float vel = m_gridVW(gridX, gridY, gridZ);
+				const float velBefore = m_gridVWBefore(gridX, gridY, gridZ);
+
+				picSum += w * vel;
+				flipSum += w * (vel - velBefore);
+				weightSum += w;
+			}
+
+			if (weightSum > 0.0f)
+			{
+				picVelocity.z() = picSum / weightSum;
+				flipVelocity.z() = flipSum / weightSum;
+			}
+		}
+
+
 		//Blend PIC and FLIP, change later to use Adaptive mixing
-		m_particleV.row(p) = (1.f - m_alphaPICFLIP) * picVelocity + m_alphaPICFLIP * (m_particleV.row(p) + flipDelta.transpose());
+		Eigen::Vector3f vOld = m_particleV.row(p).transpose();
+		Eigen::Vector3f vNew = (1.f - m_alphaPICFLIP) * picVelocity + m_alphaPICFLIP * (vOld + flipVelocity);
+		m_particleV.row(p) = vNew.transpose(); //transpose because m_particleV is RowMajor
 	}
 }
 
-void FLIPSolver::IntegrateParticles(float dt)
+
+
+void FLIPSolver::PushParticlesApart(int iterations)
 {
-	for (int i = 0; i < m_numParticles; ++i)
+	const float CELL_SIZE = 1.0f;
+	const float minDist = 2 * m_particleRadius;
+	const float sqrMinDist = std::pow(minDist, 2);
+
+
+	//Build particle in cell map
+	std::vector<std::vector<int>> cellParticles(totalNumCells());
+
+	for (int p = 0; p < m_numParticles; p++)
 	{
-		m_particlePos.row(i) += dt * m_particleV.row(i); //update positions
+		int ix, iy, iz;
+		Eigen::Vector3f f; //unused
+		ComputeCellCoordinates(m_particlePos.row(p), ix, iy, iz, f);
+
+		int cellIndex = (ix * m_cellNumY * m_cellNumZ) + (iy * m_cellNumZ) + iz;
+		cellParticles[cellIndex].push_back(p);
+	}
+
+	for (int iter = 0; iter < iterations; ++iter)
+	{
+		for (int p = 0; p < m_numParticles; ++p)
+		{
+			Eigen::Ref<Eigen::Vector3f> posP = m_particlePos.row(p);
+
+			int ix, iy, iz;
+			Eigen::Vector3f f; //unused
+			ComputeCellCoordinates(m_particlePos.row(p), ix, iy, iz, f);
+
+			for (int nx = std::max(ix - 1, 0); nx <= std::min(ix + 1, m_cellNumX - 1); ++nx) {
+				for (int ny = std::max(iy - 1, 0); ny <= std::min(iy + 1, m_cellNumY - 1); ++ny) {
+					for (int nz = std::max(iz - 1, 0); nz <= std::min(iz + 1, m_cellNumZ - 1); ++nz)
+					{
+						int neighborCell =
+							nx * m_cellNumY * m_cellNumZ +
+							ny * m_cellNumZ +
+							nz;
+
+						for (int q : cellParticles[neighborCell])
+						{
+							if (q <= p) continue;
+
+							Eigen::Ref<Eigen::Vector3f> posQ = m_particlePos.row(q);
+
+							Eigen::Vector3f delta = posQ - posP;
+							float dist2 = delta.squaredNorm();
+						}
+					}
+				}
+			}
+		}
 	}
 }
 
