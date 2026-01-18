@@ -22,4 +22,6 @@ extern "C" {
 	WASM const int GetGridXDimension(FLIPSolverHandle solver);
 	WASM const int GetGridYDimension(FLIPSolverHandle solver);
 	WASM const int GetGridZDimension(FLIPSolverHandle solver);
+
+	WASM const void WriteMeasurementsToFile(FLIPSolverHandle solver);
 }

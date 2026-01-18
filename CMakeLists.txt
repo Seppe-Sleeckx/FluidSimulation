@@ -44,8 +44,8 @@ if(EMSCRIPTEN)
         "-sEXPORT_ES6=1"
         "-sENVIRONMENT=web"
         "-sALLOW_MEMORY_GROWTH=1"
-        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap', 'HEAP32', 'HEAPF32']"
-        "-sEXPORTED_FUNCTIONS=['_Create','_Destroy','_Initialize','_Simulate','_GetParticleCount','_GetParticlePositions', '_GetGridXDimension', '_GetGridYDimension', '_GetGridZDimension', '_malloc', '_free']"
+        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap', 'FS', 'HEAP32', 'HEAPF32']"
+        "-sEXPORTED_FUNCTIONS=['_Create','_Destroy','_Initialize','_Simulate','_GetParticleCount','_GetParticlePositions', '_GetGridXDimension', '_GetGridYDimension', '_GetGridZDimension', '_WriteMeasurementsToFile', '_malloc', '_free']"
     )
 
 endif()

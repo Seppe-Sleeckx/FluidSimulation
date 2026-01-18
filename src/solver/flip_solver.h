@@ -21,9 +21,15 @@ public:
 	const int GetGridYDimension() const { return m_cellNumY; };
 	const int GetGridZDimension() const { return m_cellNumZ; };
 
+	//Logging
+	void StartMeasurement();
+	void EndMeasurement();
+	void WriteLog(const std::string& filename) const;
+
 private:
 	const Eigen::Vector3f m_gravity = Eigen::Vector3f(0.0f, -9.81f, 0.0f);;
-	const float m_alphaPICFLIP = 0.95f; //temp
+	const float m_alphaPIC = 0.05f;
+	bool m_useAdaptiveMixing = false;
 
 	//-- Grid --
 	const int m_cellNumX; //Num cells in X
@@ -61,6 +67,12 @@ private:
 	Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> m_particleV;
 	Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> m_particlePos;
 
+
+	//-- Logging --
+	std::vector<Solver_Utils::FrameMeasurement> m_frameMeasurements;
+	std::chrono::high_resolution_clock::time_point m_measureStart;
+
+
 	void ClearGrid();
 	void MarkFluidCells();
 	void TransferP2G();
@@ -68,16 +80,19 @@ private:
 	void ResolveParticleCollisions();
 	void ComputeDivergence();
 	void SaveGridAfter();
-	void TransferG2P();
+	void TransferG2P(float dt);
 	void IntegrateParticles(float dt);
 	void PushParticlesApart(int iterations);
 	void ApplyGravity(float dt);
 	void UpdateParticleDensity();
 	void SolveIncompressibility(float dt, int iterations);
 
+	//Adaptive mixing
+	float CalculatePicAlpha(float dt, const Eigen::Vector3f& partilePos) const;
+	float GetWeightedDivergenceAtPos(const Eigen::Vector3f& pos) const;
 
 	//helpers
-	void ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix, int& iy, int& iz, Eigen::Vector3f& f);
+	void ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix, int& iy, int& iz, Eigen::Vector3f& f) const;
 	float inverseGridSpacing() const { return 1.0f / m_CellSize; } //Inverse of our grid cell size
 	int totalNumCells() const { return m_cellNumX * m_cellNumY * m_cellNumZ; }
 };

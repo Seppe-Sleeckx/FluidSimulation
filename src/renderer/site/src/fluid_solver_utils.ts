@@ -5,6 +5,7 @@ export interface SolverConfig {
     numParticles: number;
     particleRadius: number;
     alphaPic: number;
+    useAdaptiveMixing: boolean;
 }
 
 export function createSolverConfig(Module: any, config: SolverConfig): number { //we return a number, this is actually the ptr to the config in wasm memory

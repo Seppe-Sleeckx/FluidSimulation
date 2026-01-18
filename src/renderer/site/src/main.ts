@@ -34,15 +34,17 @@ const getParticlePositions = Module.cwrap('GetParticlePositions', 'number', ['nu
 const getGridX = Module.cwrap('GetGridXDimension', 'number', ['number']);
 const getGridY = Module.cwrap('GetGridYDimension', 'number', ['number']);
 const getGridZ = Module.cwrap('GetGridZDimension', 'number', ['number']);
+const writeMeasurementsToFile = Module.cwrap('WriteMeasurementsToFile', null, ['number']);
 
 
 const config: SolverConfigUtils.SolverConfig = {
     gridX: 20,
-    gridY: 10,
+    gridY: 6,
     gridZ: 20,
-    numParticles: 1000,
+    numParticles: 800,
     particleRadius: 0.5,
-    alphaPic: 0.95
+    alphaPic: 0.05,
+    useAdaptiveMixing: true,
 }
 const solverConfigPtr = SolverConfigUtils.createSolverConfig(Module, config); //temp, change later
 const solverHandle = create(solverConfigPtr);
@@ -67,39 +69,17 @@ const depthTexture = gpu.device.createTexture({
 });
 
 
+let accumulatedTime = 0;
+const maxSimTime = 30; //in seconds
 let lastTime = performance.now();
+
 function draw() {
-    const now = performance.now();
-    const dt = (now - lastTime) / 1000; //in seconds
-    lastTime = now;
-
-    //camera movement
-    inputController.update(dt);
-
-
-    //Physics (move to update later)
-    simulate(solverHandle, dt); //physics step
-    //push particle data to GPU
-    const ptr = getParticlePositions(solverHandle);
-    const positions = new Float32Array(Module.HEAPF32.buffer, ptr, getParticleCount(solverHandle) * 3); //Module.HeapF32.buffer is WASM memory, zero copy
-
-    const gpuPositions = new Float32Array(getParticleCount(solverHandle) * 4);
-    for (let i = 0; i < getParticleCount(solverHandle); i++) {
-        gpuPositions[i * 4 + 0] = positions[i * 3 + 0];
-        gpuPositions[i * 4 + 1] = positions[i * 3 + 1];
-        gpuPositions[i * 4 + 2] = positions[i * 3 + 2];
-        gpuPositions[i * 4 + 3] = 1.0; //w -> 1.0 for positions
-    }
-
-    particleRenderer.updateParticles(gpuPositions);
-
-
-    //Rendering
+    Update();
     const canvasTexture = gpu.context.getCurrentTexture();
     const renderPassDescriptor: GPURenderPassDescriptor = {
         colorAttachments: [{
             view: canvasTexture.createView(),
-            clearValue: [0.3, 0.3, 0.3, 1],
+            clearValue: [0.2, 0.2, 0.2, 1],
             loadOp: "clear",
             storeOp: "store"
         }],
@@ -120,6 +100,51 @@ function draw() {
     const commandBuffer = encoder.finish();
     gpu.device.queue.submit([commandBuffer]);
     requestAnimationFrame(draw);
+}
+
+function Update()
+{
+    const now = performance.now();
+    const dt = (now - lastTime) / 1000; //in seconds
+    lastTime = now;
+
+    //camera movement
+    inputController.update(dt);
+
+
+    if (accumulatedTime < maxSimTime) {
+        simulate(solverHandle, dt); // physics step
+        accumulatedTime += dt;
+
+        if(accumulatedTime > maxSimTime)
+        {
+            writeMeasurementsToFile(solverHandle);
+            console.log("Simulation finished: measurements written to measurements.csv");
+            const data = Module.FS.readFile("measurements.csv", { encoding: "utf8" }); //get file from virtual file system
+            const blob = new Blob([data], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "measurements.csv";
+            a.click();
+
+            URL.revokeObjectURL(url);
+        }
+
+        //push particle data to GPU
+        const ptr = getParticlePositions(solverHandle);
+        const positions = new Float32Array(Module.HEAPF32.buffer, ptr, getParticleCount(solverHandle) * 3); //Module.HeapF32.buffer is WASM memory, zero copy
+
+        const gpuPositions = new Float32Array(getParticleCount(solverHandle) * 4);
+        for (let i = 0; i < getParticleCount(solverHandle); i++) {
+            gpuPositions[i * 4 + 0] = positions[i * 3 + 0];
+            gpuPositions[i * 4 + 1] = positions[i * 3 + 1];
+            gpuPositions[i * 4 + 2] = positions[i * 3 + 2];
+            gpuPositions[i * 4 + 3] = 1.0; //w -> 1.0 for positions
+        }
+        particleRenderer.updateParticles(gpuPositions);
+    }
 }
 
 draw();

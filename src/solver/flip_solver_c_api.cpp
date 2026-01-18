@@ -25,7 +25,9 @@ void Simulate(FLIPSolverHandle solver, float dt)
 {
 	if (!solver)
 		return;
+	static_cast<FLIPSolver*>(solver)->StartMeasurement();
 	static_cast<FLIPSolver*>(solver)->Simulate(dt);
+	static_cast<FLIPSolver*>(solver)->EndMeasurement();
 }
 
 int GetParticleCount(FLIPSolverHandle solver)
@@ -61,4 +63,11 @@ const int GetGridZDimension(FLIPSolverHandle solver)
 	if (!solver)
 		return 0;
 	return static_cast<FLIPSolver*>(solver)->GetGridZDimension();
+}
+
+const void WriteMeasurementsToFile(FLIPSolverHandle solver)
+{
+	if (!solver)
+		return;
+	static_cast<FLIPSolver*>(solver)->WriteLog("measurements.csv"); //this will write to a virtual file system in a webassembly environment
 }

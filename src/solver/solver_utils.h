@@ -11,6 +11,13 @@ namespace Solver_Utils
         int numParticles;
         float particleRadius;
         float alphaPic; //TEMP, Remove later
+        bool useAdaptiveMixing = false;
+    };
+
+    struct FrameMeasurement {
+        float stepTime;
+        float averageDivergence;
+        float maxDivergence;
     };
 
     struct Weight3D

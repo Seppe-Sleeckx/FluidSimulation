@@ -4,6 +4,7 @@ using namespace Solver_Utils;
 
 //DEBUG
 #include <iostream>
+#include <fstream>
 
 FLIPSolver::FLIPSolver(const SolverConfig& config) :
 	m_cellNumX{ config.gridX },
@@ -33,7 +34,8 @@ FLIPSolver::FLIPSolver(const SolverConfig& config) :
 	m_gridDensity{ m_cellNumX, m_cellNumY, m_cellNumZ },
 	m_gridCellType{ m_cellNumX, m_cellNumY, m_cellNumZ },
 	m_particlePos(m_numParticles, 3),
-	m_particleV(m_numParticles, 3)
+	m_particleV(m_numParticles, 3),
+	m_useAdaptiveMixing{ config.useAdaptiveMixing }
 {
 	m_particleV.setZero();
 }
@@ -42,7 +44,7 @@ void FLIPSolver::Initialize()
 {
 	for (size_t p = 0; p < m_numParticles; p++)
 	{
-		m_particlePos.row(p) = Eigen::Vector3f(p * .05f, 5, p * .1f);
+		m_particlePos.row(p) = Eigen::Vector3f(0.0f, m_cellNumY, 0.0f);
 	}
 
 	m_gridCellType.setConstant(CellType::Air); //start all cells at air, maybe change later to be configurable
@@ -83,7 +85,7 @@ void FLIPSolver::Simulate(float dt)
 	SaveGridAfter();
 
 	//Grid to particle (G2P)
-	TransferG2P();
+	TransferG2P(dt);
 }
 
 void FLIPSolver::ClearGrid()
@@ -609,7 +611,7 @@ void FLIPSolver::SaveGridAfter()
 	m_gridVWAfter = m_gridVW;
 }
 
-void FLIPSolver::TransferG2P()
+void FLIPSolver::TransferG2P(float dt)
 {
 	for (int p = 0; p < m_numParticles; ++p)
 	{
@@ -800,15 +802,72 @@ void FLIPSolver::TransferG2P()
 			}
 		}
 
-		//Blend PIC and FLIP, change later to use Adaptive mixing
+		//Blend PIC and FLIP
 		Eigen::Vector3f vOld = m_particleV.row(p).transpose();
-		Eigen::Vector3f vNew = (1.f - m_alphaPICFLIP) * picVelocity + m_alphaPICFLIP * (vOld + flipVelocity);
+		float picAlpha;
+		if (m_useAdaptiveMixing)
+			picAlpha = m_alphaPIC;
+		else
+			picAlpha = CalculatePicAlpha(dt, pos);
+		Eigen::Vector3f vNew = picAlpha * picVelocity + (1.f - picAlpha) * (vOld + flipVelocity);
 		m_particleV.row(p) = vNew.transpose(); //transpose because m_particleV is RowMajor
 	}
 }
 
 
+//===============
+//Adaptive mixing
+//===============
+float FLIPSolver::CalculatePicAlpha(float dt, const Eigen::Vector3f& particlePos) const
+{
+	constexpr float divergenceScale = 0.1f; //tune!!!
+	constexpr float maxPic = 1.0f; //test and tune!!!
 
+	float divergence = std::abs(GetWeightedDivergenceAtPos(particlePos));
+	float alpha = divergence * dt * divergenceScale;
+	alpha = std::clamp(alpha, 0.0f, maxPic);
+	return alpha;
+}
+
+float FLIPSolver::GetWeightedDivergenceAtPos(const Eigen::Vector3f& pos) const
+{
+	int ix, iy, iz;
+	Eigen::Vector3f f;
+	ComputeCellCoordinates(pos, ix, iy, iz, f);
+
+	Solver_Utils::Weight3D W;
+	Solver_Utils::ComputeBSplineWeights(f, W);
+
+	float divergence = 0.0f;
+	float weightSum = 0.0f;
+
+	for (int n = 0; n < 27; ++n)
+	{
+		int gridX = ix + W.offsetsX[n];
+		int gridY = iy + W.offsetsY[n];
+		int gridZ = iz + W.offsetsZ[n];
+
+		if (gridX < 0 || gridX >= m_cellNumX ||
+			gridY < 0 || gridY >= m_cellNumY ||
+			gridZ < 0 || gridZ >= m_cellNumZ)
+			continue;
+
+		if (m_gridCellType(gridX, gridY, gridZ) != CellType::Fluid)
+			continue;
+
+		float w = W.w[n];
+		divergence += w * m_gridDivergence(gridX, gridY, gridZ);
+		weightSum += w;
+	}
+
+	return (weightSum > 0.0f) ? divergence / weightSum : 0.0f; //prevent division by zero
+}
+
+
+
+//=========
+//Helpers
+//=========
 void FLIPSolver::PushParticlesApart(int iterations)
 {
 	const float minDist = 2.0f * m_particleRadius;
@@ -859,7 +918,7 @@ void FLIPSolver::PushParticlesApart(int iterations)
 								continue;
 
 							float dist = std::sqrt(dist2);
-							float pushFactor = 0.1f * (minDist - dist) / dist;
+							float pushFactor = 0.5f * (minDist - dist) / dist;
 							Eigen::Vector3f correction = pushFactor * delta;
 
 							// Move both particles apart
@@ -873,7 +932,7 @@ void FLIPSolver::PushParticlesApart(int iterations)
 	}
 }
 
-void FLIPSolver::ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix, int& iy, int& iz, Eigen::Vector3f& f)
+void FLIPSolver::ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix, int& iy, int& iz, Eigen::Vector3f& f) const
 {
 	//convert from grid space to world space
 	Eigen::Vector3f gridPos = particle / m_CellSize;
@@ -890,4 +949,58 @@ void FLIPSolver::ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix
 	f.x() = gridPos.x() - ix;
 	f.y() = gridPos.y() - iy;
 	f.z() = gridPos.z() - iz;
+}
+
+
+
+//=========
+//Logging
+//=========
+void FLIPSolver::StartMeasurement()
+{
+	m_measureStart = std::chrono::high_resolution_clock::now();
+}
+
+void FLIPSolver::EndMeasurement()
+{
+	FrameMeasurement fm;
+	//measure time taken
+	auto endTime = std::chrono::high_resolution_clock::now();
+	float stepTime = std::chrono::duration<float, std::milli>(endTime - m_measureStart).count(); //in muilliseconds
+	fm.stepTime = stepTime; 
+
+	//compute avg weighted divergence
+	float totalDivergence = 0.0f;
+	float maxDivergence = 0.0f;
+	for (int p = 0; p < m_numParticles; ++p)
+	{
+		float weightedDivergence = std::abs(GetWeightedDivergenceAtPos(m_particlePos.row(p)));
+		totalDivergence += weightedDivergence;
+		if (weightedDivergence > maxDivergence)
+			maxDivergence = weightedDivergence;
+	}
+	fm.averageDivergence = totalDivergence / m_numParticles;
+	fm.maxDivergence = maxDivergence;
+
+	m_frameMeasurements.emplace_back(fm);
+}
+
+void FLIPSolver::WriteLog(const std::string& filename) const
+{
+	std::cout << "(Solver) Writing output to: " << filename << std::endl;
+
+	std::ofstream outFile(filename);
+	if (!outFile.is_open())
+		return;
+
+	// Write header
+	outFile << "FrameIdx,StepTime (in ms),AverageDivergence,MaxDivergence\n";
+
+	for (size_t i = 0; i < m_frameMeasurements.size(); ++i)
+	{
+		std::cout << "frame: " << i << std::endl;
+		const FrameMeasurement& fm = m_frameMeasurements[i];
+		outFile << i << "," << fm.stepTime << "," << fm.averageDivergence << "," << fm.maxDivergence << "\n";
+	}
+	std::cout << "(Solver) Succesfully written output to: " << filename << std::endl;
 }
