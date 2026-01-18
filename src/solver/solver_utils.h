@@ -32,11 +32,11 @@ namespace Solver_Utils
         f = std::clamp(f, 0.0f, 1.0f);
         Eigen::Vector3f w;
 
-        w[0] = 0.5f * (1.5f - f) * (1.5f - f); //left node
-        w[1] = 0.75f - (f - 1.0f) * (f - 1.0f); //central node
-        w[2] = 0.5f * (f - 0.5f) * (f - 0.5f); //right node
+        w[0] = 0.5f * ((1.0f - f) * (1.0f - f)); //left node
+        w[1] = 0.75f - (f - 0.5f) * (f - 0.5f); //central node
+        w[2] = 0.5f * (f * f); //right node
 
-        return w;
+        return w; //all our weight will be positive here, if not big problem
     }
 
     static void ComputeBSplineWeights(const Eigen::Vector3f& f, Weight3D& out)

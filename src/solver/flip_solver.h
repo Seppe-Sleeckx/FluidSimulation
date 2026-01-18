@@ -15,7 +15,7 @@ public:
 
 	void Initialize();
 	void Simulate(float dt);
-	int GetParticleCount() const {return m_numParticles;};
+	int GetParticleCount() const { return m_numParticles; };
 	const Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor>& GetParticlePositions() const { return m_particlePos; };
 	const int GetGridXDimension() const { return m_cellNumX; };
 	const int GetGridYDimension() const { return m_cellNumY; };
@@ -26,37 +26,37 @@ private:
 	const float m_alphaPICFLIP = 0.95f; //temp
 
 	//-- Grid --
-		const int m_cellNumX; //Num cells in X
-		const int m_cellNumY; //Num cells in Y
-		const int m_cellNumZ; //Num cells in Z
+	const int m_cellNumX; //Num cells in X
+	const int m_cellNumY; //Num cells in Y
+	const int m_cellNumZ; //Num cells in Z
 
-		const float m_CellSize = 1.0f;
+	const float m_CellSize = 1.0f;
 
-		Eigen::Tensor<float, 3> m_gridVU;        // (x+1, y, z)
-		Eigen::Tensor<float, 3> m_gridVV;        // (x, y+1, z)
-		Eigen::Tensor<float, 3> m_gridVW;		// (x, y, z+1)
+	Eigen::Tensor<float, 3> m_gridVU;        // (x+1, y, z)
+	Eigen::Tensor<float, 3> m_gridVV;        // (x, y+1, z)
+	Eigen::Tensor<float, 3> m_gridVW;		// (x, y, z+1)
 
-		Eigen::Tensor<float, 3> m_gridVUBefore;        // (x+1, y, z)
-		Eigen::Tensor<float, 3> m_gridVVBefore;        // (x, y+1, z)
-		Eigen::Tensor<float, 3> m_gridVWBefore;		// (x, y, z+1)
+	Eigen::Tensor<float, 3> m_gridVUBefore;        // (x+1, y, z)
+	Eigen::Tensor<float, 3> m_gridVVBefore;        // (x, y+1, z)
+	Eigen::Tensor<float, 3> m_gridVWBefore;		// (x, y, z+1)
 
-		Eigen::Tensor<float, 3> m_gridVUAfter;        // (x+1, y, z)
-		Eigen::Tensor<float, 3> m_gridVVAfter;        // (x, y+1, z)
-		Eigen::Tensor<float, 3> m_gridVWAfter;		// (x, y, z+1)
+	Eigen::Tensor<float, 3> m_gridVUAfter;        // (x+1, y, z)
+	Eigen::Tensor<float, 3> m_gridVVAfter;        // (x, y+1, z)
+	Eigen::Tensor<float, 3> m_gridVWAfter;		// (x, y, z+1)
 
-		Eigen::Tensor<float, 3> m_gridWeightU;		// (x+1, y, z)
-		Eigen::Tensor<float, 3> m_gridWeightV;		// (x, y+1, z)
-		Eigen::Tensor<float, 3> m_gridWeightW;		// (x, y, z+1)
+	Eigen::Tensor<float, 3> m_gridWeightU;		// (x+1, y, z)
+	Eigen::Tensor<float, 3> m_gridWeightV;		// (x, y+1, z)
+	Eigen::Tensor<float, 3> m_gridWeightW;		// (x, y, z+1)
 
-		Eigen::Tensor<float, 3> m_gridPressure;  //Pressure per cell
-		Eigen::Tensor<float, 3> m_gridDivergence;//Divergence per cell
-		Eigen::Tensor<float, 3> m_gridDensity; //particle density per cell
-		Eigen::Tensor<Solver_Utils::CellType, 3>   m_gridCellType;		//0 = fluid, 1 = air, 2 = solid boundary
+	Eigen::Tensor<float, 3> m_gridPressure;  //Pressure per cell
+	Eigen::Tensor<float, 3> m_gridDivergence;//Divergence per cell
+	Eigen::Tensor<float, 3> m_gridDensity; //particle density per cell
+	Eigen::Tensor<Solver_Utils::CellType, 3>   m_gridCellType;		//0 = fluid, 1 = air, 2 = solid boundary
 
 	//-- Particles --
 	const int m_numParticles;
 	const float m_particleRadius;
-	float m_particleRestDensity{}; //what is our reference density of our fluid (differs per fluid type)
+	float m_particleRestDensity{1.0f}; //what is our reference density of our fluid, harcoded for now
 
 	Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> m_particleV;
 	Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> m_particlePos;
@@ -78,7 +78,6 @@ private:
 
 	//helpers
 	void ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix, int& iy, int& iz, Eigen::Vector3f& f);
-	float particleInvSpacing() const {return 1.0f / (2.1f * m_particleRadius); } //2.1 because we dont want to miss our neighbours
 	float inverseGridSpacing() const { return 1.0f / m_CellSize; } //Inverse of our grid cell size
 	int totalNumCells() const { return m_cellNumX * m_cellNumY * m_cellNumZ; }
 };

@@ -37,11 +37,11 @@ const getGridZ = Module.cwrap('GetGridZDimension', 'number', ['number']);
 
 
 const config: SolverConfigUtils.SolverConfig = {
-    gridX: 10,
+    gridX: 20,
     gridY: 10,
-    gridZ: 10,
-    numParticles: 100,
-    particleRadius: 0.15,
+    gridZ: 20,
+    numParticles: 1000,
+    particleRadius: 0.5,
     alphaPic: 0.95
 }
 const solverConfigPtr = SolverConfigUtils.createSolverConfig(Module, config); //temp, change later
@@ -49,29 +49,12 @@ const solverHandle = create(solverConfigPtr);
 SolverConfigUtils.freeSolverConfig(Module, solverConfigPtr); //free the memory after creating our solver
 
 initialize(solverHandle);
-console.log("ParticleCount: " + getParticleCount(solverHandle));
-console.log("Grid X: " + getGridX(solverHandle));
-console.log("Grid Y: " + getGridY(solverHandle));
-console.log("Grid Z: " + getGridZ(solverHandle));
-
-
-//const ptr = getParticlePositions(solverHandle);
-//const positions = new Float32Array(Module.HEAPF32.buffer, ptr >> 2, getParticleCount(solverHandle) * 3); //Module.HeapF32.buffer is WASM memory, ptr >> 2 because ptr is a byte ptr not a float ptr
-//
-//const gpuPositions = new Float32Array(getParticleCount(solverHandle) * 4);
-//for (let i = 0; i < getParticleCount(solverHandle); i++) {
-//    gpuPositions[i * 4 + 0] = positions[i * 3 + 0];
-//    gpuPositions[i * 4 + 1] = positions[i * 3 + 1];
-//    gpuPositions[i * 4 + 2] = positions[i * 3 + 2];
-//    gpuPositions[i * 4 + 3] = 1.0; //w -> 1.0 for positions
-//}
 
 //================
 //Renderers
 //================
 const particleRenderer = new ParticleRenderer(gpu, camera, getParticleCount(solverHandle));
 particleRenderer.initialize(); //setup renderer for x amount fo particles
-//particleRenderer.updateParticles(gpuPositions);
 
 const boundsRenderer = new BoundsRenderer(gpu, camera, getGridX(solverHandle), getGridY(solverHandle), getGridZ(solverHandle));
 boundsRenderer.Initialize();
@@ -99,13 +82,6 @@ function draw() {
     //push particle data to GPU
     const ptr = getParticlePositions(solverHandle);
     const positions = new Float32Array(Module.HEAPF32.buffer, ptr, getParticleCount(solverHandle) * 3); //Module.HeapF32.buffer is WASM memory, zero copy
-
-    for (let i = 0; i < getParticleCount(solverHandle); i++) {
-        const x = positions[i * 3 + 0];
-        const y = positions[i * 3 + 1];
-        const z = positions[i * 3 + 2];
-        console.log(`WASM p${i}:`, x, y, z);
-    }
 
     const gpuPositions = new Float32Array(getParticleCount(solverHandle) * 4);
     for (let i = 0; i < getParticleCount(solverHandle); i++) {
