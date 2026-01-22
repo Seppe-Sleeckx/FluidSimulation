@@ -39,12 +39,12 @@ const writeMeasurementsToFile = Module.cwrap('WriteMeasurementsToFile', null, ['
 
 const config: SolverConfigUtils.SolverConfig = {
     gridX: 20,
-    gridY: 6,
+    gridY: 20,
     gridZ: 20,
     numParticles: 800,
     particleRadius: 0.5,
     alphaPic: 0.05,
-    useAdaptiveMixing: true,
+    useAdaptiveMixing: false,
 }
 const solverConfigPtr = SolverConfigUtils.createSolverConfig(Module, config); //temp, change later
 const solverHandle = create(solverConfigPtr);
@@ -142,6 +142,8 @@ function Update()
             gpuPositions[i * 4 + 1] = positions[i * 3 + 1];
             gpuPositions[i * 4 + 2] = positions[i * 3 + 2];
             gpuPositions[i * 4 + 3] = 1.0; //w -> 1.0 for positions
+
+            //console.log(`Particle ${i}: x=${positions[i * 3 + 0]}, y=${positions[i * 3 + 1]}, z=${positions[i * 3 + 2]}`); //DEBUG
         }
         particleRenderer.updateParticles(gpuPositions);
     }

@@ -10,7 +10,7 @@ namespace Solver_Utils
         int gridZ;
         int numParticles;
         float particleRadius;
-        float alphaPic; //TEMP, Remove later
+        float alphaPic;
         bool useAdaptiveMixing = false;
     };
 

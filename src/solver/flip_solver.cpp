@@ -42,22 +42,70 @@ FLIPSolver::FLIPSolver(const SolverConfig& config) :
 
 void FLIPSolver::Initialize()
 {
-	for (size_t p = 0; p < m_numParticles; p++)
+	//1. Spread particles over grid
+	const float diameter = 2.0f * m_particleRadius;
+	float maxParticlesX = (m_cellNumX * m_CellSize) / diameter;
+	float maxParticlesY = (m_cellNumY * m_CellSize) / diameter;
+	float maxParticlesZ = (m_cellNumZ * m_CellSize) / diameter;
+
+	int pIdx = 0;
+	for (int iz = 0; iz < maxParticlesZ; ++iz)
 	{
-		m_particlePos.row(p) = Eigen::Vector3f(0.0f, m_cellNumY, 0.0f);
+		if (pIdx >= m_numParticles)
+			break;
+		float z = iz * diameter;
+
+		for (int iy = 0; iy < maxParticlesY; ++iy)
+		{
+			if (pIdx >= m_numParticles)
+				break;
+			float y = (m_cellNumY * m_CellSize) - iy * diameter; //top down
+
+			for (int ix = 0; ix < maxParticlesX; ++ix)
+			{
+				if (pIdx >= m_numParticles)
+					break;
+				float x = ix * diameter;
+				m_particlePos.row(pIdx) = Eigen::Vector3f(x, y, z);
+				++pIdx;
+			}
+		}
 	}
 
+	//Initialize grid for first update
 	m_gridCellType.setConstant(CellType::Air); //start all cells at air, maybe change later to be configurable
-
 	ClearGrid();
-	MarkFluidCells();
+	MarkFluidCells(); //needs to be done BEFORE UpdatingParticleDensity
+
+	
+
+	//2. Compute particle rest density, make sure particles are at rest positions
+	UpdateParticleDensity(); //very important, m_gridDensity will be zero otherwise
+	m_particleRestDensity = 0.0f;
+	int numFluidCells = 0;
+
+	for (int x = 0; x < m_cellNumX; x++)
+		for (int y = 0; y < m_cellNumY; y++)
+			for (int z = 0; z < m_cellNumZ; z++)
+			{
+				if (m_gridCellType(x, y, z) == CellType::Fluid)
+				{
+					m_particleRestDensity += m_gridDensity(x, y, z);
+					numFluidCells++;
+				}
+			}
+
+	if (numFluidCells > 0)
+		m_particleRestDensity /= float(numFluidCells);
+
+	std::cout << "particle rest density: " << m_particleRestDensity << std::endl;
 }
 
 void FLIPSolver::Simulate(float dt)
 {
 	//Advection step
 	IntegrateParticles(dt);
-	PushParticlesApart(3);
+	PushParticlesApart(6);
 	ResolveParticleCollisions(); //make sure particles stay inside the domain
 	
 
@@ -418,7 +466,6 @@ void FLIPSolver::UpdateParticleDensity()
 
 void FLIPSolver::SolveIncompressibility(float dt, int iterations)
 {
-	//Gauss Seidel (use PCG later when more time)
 	constexpr float overrelaxation = 1.6f; //use overrelaxation to converge faster, 1.0 == default gauss Seidel
 
 	m_gridPressure.setZero();
@@ -427,17 +474,15 @@ void FLIPSolver::SolveIncompressibility(float dt, int iterations)
 	m_gridVWAfter = m_gridVW;
 	const float scale = dt / m_CellSize;
 
-
-	auto IsValidNeighbor = [&](int x, int y, int z) {
+	auto IsValid = [&](int x, int y, int z) {	// inside domain? (out-of-bounds treated like solid = 0 velocity)
 		return x >= 0 && x < m_cellNumX &&
 			y >= 0 && y < m_cellNumY &&
-			z >= 0 && z < m_cellNumZ &&
-			m_gridCellType(x, y, z) != CellType::Solid;
+			z >= 0 && z < m_cellNumZ;
 		};
+
 
 	for (int iter = 0; iter < iterations; iter++)
 	{
-		ComputeDivergence();
 		for (int x = 0; x < m_cellNumX; x++) {
 			for (int y = 0; y < m_cellNumY; y++) {
 				for (int z = 0; z < m_cellNumZ; z++)
@@ -446,12 +491,12 @@ void FLIPSolver::SolveIncompressibility(float dt, int iterations)
 						continue;
 
 					//Check which of our neighbours are fluid
-					bool validX0 = IsValidNeighbor(x - 1, y, z);
-					bool validX1 = IsValidNeighbor(x + 1, y, z);
-					bool validY0 = IsValidNeighbor(x, y - 1, z);
-					bool validY1 = IsValidNeighbor(x, y + 1, z);
-					bool validZ0 = IsValidNeighbor(x, y, z - 1);
-					bool validZ1 = IsValidNeighbor(x, y, z + 1);
+					bool validX0 = IsValid(x - 1, y, z);
+					bool validX1 = IsValid(x + 1, y, z);
+					bool validY0 = IsValid(x, y - 1, z);
+					bool validY1 = IsValid(x, y + 1, z);
+					bool validZ0 = IsValid(x, y, z - 1);
+					bool validZ1 = IsValid(x, y, z + 1);
 
 					//we need to know how many valid neighbours we have to know in how many direction we can push our pressure can push our fluid, converting bool to int (kinda ugly but works)
 					int numValidNeighbours = validX0 + validX1 + validY0 + validY1 + validZ0 + validZ1;
@@ -460,26 +505,36 @@ void FLIPSolver::SolveIncompressibility(float dt, int iterations)
 						continue; //no usable neighbours
 
 
-					if (m_particleRestDensity > 0.0f) //compensate for drift (prevents growing/shrinking of total volume)
-					{
-						float density = m_gridDensity(x, y, z);
+					float div = 0.0f;
 
-						float compression = (density - m_particleRestDensity) / m_particleRestDensity;
+					// X
+					if (validX1) div += m_gridVU(x + 1, y, z);  // right face
+					if (validX0) div -= m_gridVU(x, y, z);      // left face
 
+					// Y
+					if (validY1) div += m_gridVV(x, y + 1, z);  // top face
+					if (validY0) div -= m_gridVV(x, y, z);      // bottom face
+
+					// Z
+					if (validZ1) div += m_gridVW(x, y, z + 1);  // front face
+					if (validZ0) div -= m_gridVW(x, y, z);      // back face
+
+
+
+					if (m_particleRestDensity > 0.0f) {
+						float compression = m_gridDensity(x, y, z) - m_particleRestDensity;
 						if (compression > 0.0f)
 						{
 							const float driftScale = 0.1f; //test, tune later
-							m_gridDivergence(x, y, z) -= driftScale * compression;
+							div -= driftScale * compression;
 						}
 					}
 
 
-
-					float pressure = -m_gridDivergence(x, y, z) / numValidNeighbours;
+					float pressure = -div / numValidNeighbours;
 					pressure *= overrelaxation; //we use overrelaxation to converge faster with less iterations
-					pressure *= scale;
 
-					m_gridPressure(x, y, z) += pressure;
+					m_gridPressure(x, y, z) += pressure * scale;
 
 					//x
 					if (validX0)
@@ -504,11 +559,10 @@ void FLIPSolver::SolveIncompressibility(float dt, int iterations)
 
 void FLIPSolver::ComputeDivergence()
 {
-	auto IsValidNeighbor = [&](int x, int y, int z) {
+	auto IsValid = [&](int x, int y, int z) {
 		return x >= 0 && x < m_cellNumX &&
 			y >= 0 && y < m_cellNumY &&
-			z >= 0 && z < m_cellNumZ &&
-			m_gridCellType(x, y, z) != CellType::Solid;
+			z >= 0 && z < m_cellNumZ;
 		};
 
 	for (int x = 0; x < m_cellNumX; x++)
@@ -523,28 +577,35 @@ void FLIPSolver::ComputeDivergence()
 					continue;
 				}
 
+				bool validX0 = IsValid(x - 1, y, z);
+				bool validX1 = IsValid(x + 1, y, z);
+				bool validY0 = IsValid(x, y - 1, z);
+				bool validY1 = IsValid(x, y + 1, z);
+				bool validZ0 = IsValid(x, y, z - 1);
+				bool validZ1 = IsValid(x, y, z + 1);
+
 				float divergence = 0.f;
 
 				//X
-				if (IsValidNeighbor(x + 1, y, z)) //right neighbour
+				if (validX1) //right neighbour
 					divergence += m_gridVU(x + 1, y, z);	//right face
-				if (IsValidNeighbor(x - 1, y, z)) //left neigbour
+				if (validX0) //left neigbour
 					divergence -= m_gridVU(x, y, z); //left face, not x - 1 because staggered grid
 
 				//Y
-				if (IsValidNeighbor(x, y + 1, z)) //top neigbour
+				if (validY1) //top neigbour
 					divergence += m_gridVV(x, y + 1, z);	//up face
-				if (IsValidNeighbor(x, y - 1, z)) //bottom neighbour
+				if (validY0) //bottom neighbour
 					divergence -= m_gridVV(x, y, z);	//down face
 
 				//Z
-				if (IsValidNeighbor(x, y, z + 1)) //back neighbour
+				if (validZ1) //back neighbour
 					divergence += m_gridVW(x, y, z + 1); //back face
-				if (IsValidNeighbor(x, y, z - 1)) //front neighbour
+				if (validZ0) //front neighbour
 					divergence -= m_gridVW(x, y, z);	//front face
 
 
-				m_gridDivergence(x, y, z) = divergence * inverseGridSpacing();
+				m_gridDivergence(x, y, z) = divergence;
 			}
 		}
 	}
@@ -560,46 +621,31 @@ void FLIPSolver::ResolveParticleCollisions()
 	const float zMin = m_particleRadius;
 	const float zMax = (m_cellNumZ)*m_CellSize - m_particleRadius;
 
-	for (int p = 0; p < m_numParticles; p++)
+	const Eigen::Vector3f minBound(xMin, yMin, zMin);
+	const Eigen::Vector3f maxBound(xMax, yMax, zMax);
+
+	for (int p = 0; p < m_numParticles; ++p)
 	{
-		Eigen::Ref<Eigen::RowVector3f> particle_p = m_particlePos.row(p).transpose();	//Eigen::ref prevents a copy and is writable, need to use rowVector3f since m_particlePos is rowMajor
-		Eigen::Ref<Eigen::RowVector3f> particle_v = m_particleV.row(p).transpose(); //need to transpose because m_particleV is rowMajor, and Vector3f is a column vector
-		//transpose does NOT return a copy, it returns a view that references our original (rowMajor) velocity/position
+		Eigen::Ref<Eigen::RowVector3f> pos = m_particlePos.row(p);
+		Eigen::Ref<Eigen::RowVector3f> vel = m_particleV.row(p);
 
-		//x
-		if (particle_p.x() < xMin) {
-			particle_p.x() = xMin;
-			if (particle_v.x() < 0.0f) //prevents sticking to walls
-				particle_v.x() = 0.0f;
-		}
-		else if (particle_p.x() > xMax) {
-			particle_p.x() = xMax;
-			if (particle_v.x() > 0.0f)
-				particle_v.x() = 0.0f;
-		}
-
-		//y
-		if (particle_p.y() < yMin) {
-			particle_p.y() = yMin;
-			if (particle_v.y() < 0.0f) //prevents sticking to walls
-				particle_v.y() = 0.0f;
-		}
-		else if (particle_p.y() > yMax) {
-			particle_p.y() = yMax;
-			if (particle_v.y() > 0.0f)
-				particle_v.y() = 0.0f;
-		}
-
-		//z
-		if (particle_p.z() < zMin) {
-			particle_p.z() = zMin;
-			if (particle_v.z() < 0.0f) //prevents sticking to walls
-				particle_v.z() = 0.0f;
-		}
-		else if (particle_p.z() > zMax) {
-			particle_p.z() = zMax;
-			if (particle_v.z() > 0.0f)
-				particle_v.z() = 0.0f;
+		//foreach axis; 0 = x; 1 = y; 2 = z;
+		for (int i = 0; i < 3; ++i)
+		{
+			if (pos[i] < minBound[i])
+			{
+				pos[i] = minBound[i];
+				float velocityNormal = vel[i]; //velocity along axis
+				if (velocityNormal < 0.0f)
+					vel[i] -= velocityNormal; //remove normal, keep tangential, helps with velocity up the hill
+			}
+			else if (pos[i] > maxBound[i])
+			{
+				pos[i] = maxBound[i];
+				float velocityNormal = vel[i]; 
+				if (velocityNormal > 0.0f)
+					vel[i] -= velocityNormal;
+			}
 		}
 	}
 }
@@ -804,7 +850,7 @@ void FLIPSolver::TransferG2P(float dt)
 
 		//Blend PIC and FLIP
 		Eigen::Vector3f vOld = m_particleV.row(p).transpose();
-		float picAlpha;
+		float picAlpha = m_alphaPIC;
 		if (m_useAdaptiveMixing)
 			picAlpha = m_alphaPIC;
 		else
@@ -970,6 +1016,7 @@ void FLIPSolver::EndMeasurement()
 	fm.stepTime = stepTime; 
 
 	//compute avg weighted divergence
+	ComputeDivergence();
 	float totalDivergence = 0.0f;
 	float maxDivergence = 0.0f;
 	for (int p = 0; p < m_numParticles; ++p)
