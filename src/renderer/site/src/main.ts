@@ -41,7 +41,7 @@ const config: SolverConfigUtils.SolverConfig = {
     gridX: 20,
     gridY: 20,
     gridZ: 20,
-    numParticles: 800,
+    numParticles: 500,
     particleRadius: 0.5,
     alphaPic: 0.05,
     useAdaptiveMixing: false,

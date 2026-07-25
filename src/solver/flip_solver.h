@@ -62,7 +62,7 @@ private:
 	//-- Particles --
 	const int m_numParticles;
 	const float m_particleRadius;
-	float m_particleRestDensity{}; //what is our reference density of our fluid, harcoded for now
+	float m_particleRestDensity{}; //what is our reference density of our fluid
 
 	Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> m_particleV;
 	Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> m_particlePos;

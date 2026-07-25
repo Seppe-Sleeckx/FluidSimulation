@@ -443,7 +443,7 @@ void FLIPSolver::UpdateParticleDensity()
 		Solver_Utils::Weight3D W;
 		Solver_Utils::ComputeBSplineWeights(fractionalOffset, W);
 
-		for (int n = 0; n < 27; ++n)
+		for (int n = 0; n < 27; ++n) 
 		{
 			int gridX = ix + W.offsetsX[n];
 			int gridY = iy + W.offsetsY[n];
@@ -474,12 +474,11 @@ void FLIPSolver::SolveIncompressibility(float dt, int iterations)
 	m_gridVWAfter = m_gridVW;
 	const float scale = dt / m_CellSize;
 
-	auto IsValid = [&](int x, int y, int z) {	// inside domain? (out-of-bounds treated like solid = 0 velocity)
+	auto IsValid = [&](int x, int y, int z) {	//is inside domain? (out-of-bounds treated like solid = 0 velocity)
 		return x >= 0 && x < m_cellNumX &&
 			y >= 0 && y < m_cellNumY &&
 			z >= 0 && z < m_cellNumZ;
 		};
-
 
 	for (int iter = 0; iter < iterations; iter++)
 	{
@@ -508,20 +507,20 @@ void FLIPSolver::SolveIncompressibility(float dt, int iterations)
 					float div = 0.0f;
 
 					// X
-					if (validX1) div += m_gridVU(x + 1, y, z);  // right face
-					if (validX0) div -= m_gridVU(x, y, z);      // left face
+					if (validX1) div += m_gridVU(x + 1, y, z);  //right face
+					if (validX0) div -= m_gridVU(x, y, z);      //left face
 
 					// Y
-					if (validY1) div += m_gridVV(x, y + 1, z);  // top face
-					if (validY0) div -= m_gridVV(x, y, z);      // bottom face
+					if (validY1) div += m_gridVV(x, y + 1, z);  //top face
+					if (validY0) div -= m_gridVV(x, y, z);      //bottom face
 
 					// Z
-					if (validZ1) div += m_gridVW(x, y, z + 1);  // front face
-					if (validZ0) div -= m_gridVW(x, y, z);      // back face
+					if (validZ1) div += m_gridVW(x, y, z + 1);  //front face
+					if (validZ0) div -= m_gridVW(x, y, z);      //back face
 
 
 
-					if (m_particleRestDensity > 0.0f) {
+					if (m_particleRestDensity > 0.0f) { //compensate density drift
 						float compression = m_gridDensity(x, y, z) - m_particleRestDensity;
 						if (compression > 0.0f)
 						{
@@ -532,7 +531,7 @@ void FLIPSolver::SolveIncompressibility(float dt, int iterations)
 
 
 					float pressure = -div / numValidNeighbours;
-					pressure *= overrelaxation; //we use overrelaxation to converge faster with less iterations
+					pressure *= overrelaxation;
 
 					m_gridPressure(x, y, z) += pressure * scale;
 
@@ -659,6 +658,7 @@ void FLIPSolver::SaveGridAfter()
 
 void FLIPSolver::TransferG2P(float dt)
 {
+	ComputeDivergence(); //Necessary for adaptive mixing!!!
 	for (int p = 0; p < m_numParticles; ++p)
 	{
 		const Eigen::Vector3f pos = m_particlePos.row(p).transpose();
@@ -867,7 +867,7 @@ void FLIPSolver::TransferG2P(float dt)
 float FLIPSolver::CalculatePicAlpha(float dt, const Eigen::Vector3f& particlePos) const
 {
 	constexpr float divergenceScale = 0.1f; //tune!!!
-	constexpr float maxPic = 1.0f; //test and tune!!!
+	constexpr float maxPic = 1.0f;
 
 	float divergence = std::abs(GetWeightedDivergenceAtPos(particlePos));
 	float alpha = divergence * dt * divergenceScale;
@@ -1015,19 +1015,43 @@ void FLIPSolver::EndMeasurement()
 	float stepTime = std::chrono::duration<float, std::milli>(endTime - m_measureStart).count(); //in muilliseconds
 	fm.stepTime = stepTime; 
 
-	//compute avg weighted divergence
+	//compute avg weighted divergence, fix this this is pointless, dont use abs()
 	ComputeDivergence();
 	float totalDivergence = 0.0f;
-	float maxDivergence = 0.0f;
 	for (int p = 0; p < m_numParticles; ++p)
 	{
 		float weightedDivergence = std::abs(GetWeightedDivergenceAtPos(m_particlePos.row(p)));
 		totalDivergence += weightedDivergence;
-		if (weightedDivergence > maxDivergence)
-			maxDivergence = weightedDivergence;
 	}
 	fm.averageDivergence = totalDivergence / m_numParticles;
-	fm.maxDivergence = maxDivergence;
+
+
+	//compute density error
+	float totalCompression = 0.0f;
+	fm.maxCompression = 0.0f;
+	int compressedCellCount = 0;
+
+	for (int ix = 0; ix < m_cellNumX; ix++){
+		for (int iy = 0; iy < m_cellNumY; iy++){
+			for (int iz = 0; iz < m_cellNumZ; iz++)
+			{
+				//if (m_gridDensity(ix, iy, iz) < 0.5f * m_particleRestDensity) //avoid counting free surfaces
+				//	continue;
+
+				float compression = m_gridDensity(ix, iy, iz) - m_particleRestDensity;
+				if (compression > 0.0f)
+				{
+					totalCompression += compression;
+					compressedCellCount++;
+					fm.maxCompression = std::max(fm.maxCompression, compression);
+				}
+					
+			}
+		}
+	}
+	if(compressedCellCount > 0)
+		fm.averageCompression = totalCompression / compressedCellCount;
+
 
 	m_frameMeasurements.emplace_back(fm);
 }
@@ -1041,13 +1065,13 @@ void FLIPSolver::WriteLog(const std::string& filename) const
 		return;
 
 	// Write header
-	outFile << "FrameIdx,StepTime (in ms),AverageDivergence,MaxDivergence\n";
+	outFile << "FrameIdx,StepTime (in ms),AverageDivergence\n";
 
 	for (size_t i = 0; i < m_frameMeasurements.size(); ++i)
 	{
 		std::cout << "frame: " << i << std::endl;
 		const FrameMeasurement& fm = m_frameMeasurements[i];
-		outFile << i << "," << fm.stepTime << "," << fm.averageDivergence << "," << fm.maxDivergence << "\n";
+		outFile << i << "," << fm.stepTime << "," << fm.averageDivergence << "\n";
 	}
 	std::cout << "(Solver) Succesfully written output to: " << filename << std::endl;
 }

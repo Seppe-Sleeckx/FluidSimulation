@@ -17,7 +17,10 @@ namespace Solver_Utils
     struct FrameMeasurement {
         float stepTime;
         float averageDivergence;
-        float maxDivergence;
+        float averageCompression;
+        float maxCompression;
+        float totalVolume;
+        //maybe also track pressure?
     };
 
     struct Weight3D
