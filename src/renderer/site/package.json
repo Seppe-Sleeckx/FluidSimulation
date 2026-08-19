@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "dev:full": "npm run build:wasm && vite",
+    "build": "npm run build:wasm && tsc && vite build",
+    "build:wasm": "cmake --build ../../../build/wasm --target fluid_wasm",
     "preview": "vite preview"
   },
   "devDependencies": {
