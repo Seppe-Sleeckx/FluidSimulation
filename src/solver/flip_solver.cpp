@@ -1,5 +1,6 @@
 #include "flip_solver.h"
 #include <limits>
+#include <algorithm>
 using namespace Solver_Utils;
 
 //DEBUG
@@ -159,7 +160,8 @@ void FLIPSolver::ClearGrid()
 }
 
 void FLIPSolver::MarkFluidCells() {
-	for (int x = 0; x < m_cellNumX; ++x) {
+	Solver_Utils::ParallelFor(0, m_cellNumX, [&](int x)
+	{
 		for (int y = 0; y < m_cellNumY; ++y) {
 			for (int z = 0; z < m_cellNumZ; ++z)
 			{
@@ -167,7 +169,7 @@ void FLIPSolver::MarkFluidCells() {
 					m_gridCellType(x, y, z) = CellType::Air; //set all non solid cells to air
 			}
 		}
-	}
+	});
 
 	for (int p = 0; p < m_numParticles; ++p)
 	{
@@ -206,10 +208,10 @@ void FLIPSolver::MarkFluidCells() {
 
 void FLIPSolver::IntegrateParticles(float dt)
 {
-	for (int i = 0; i < m_numParticles; ++i)
+	Solver_Utils::ParallelFor(0, m_numParticles, [&](int i)
 	{
 		m_particlePos.row(i) += dt * m_particleV.row(i); //update positions
-	}
+	});
 }
 
 void FLIPSolver::TransferP2G()
@@ -328,32 +330,32 @@ void FLIPSolver::TransferP2G()
 		}
 	}
 
-	for (int x = 0; x < m_cellNumX + 1; ++x) { //Normalize grid velocities on X (U) faces
+	Solver_Utils::ParallelFor(0, m_cellNumX + 1, [&](int x) { //Normalize grid velocities on X (U) faces
 		for (int y = 0; y < m_cellNumY; ++y) {
 			for (int z = 0; z < m_cellNumZ; ++z) {
 				if (m_gridWeightU(x, y, z) > 0.0f)
 					m_gridVU(x, y, z) /= m_gridWeightU(x, y, z);
 			}
 		}
-	}
+	});
 
-	for (int x = 0; x < m_cellNumX; ++x) {
+	Solver_Utils::ParallelFor(0, m_cellNumX, [&](int x) {
 		for (int y = 0; y < m_cellNumY + 1; ++y) {//Normalize grid velocities on Y (V) faces
 			for (int z = 0; z < m_cellNumZ; ++z) {
 				if (m_gridWeightV(x, y, z) > 0.0f)
 					m_gridVV(x, y, z) /= m_gridWeightV(x, y, z);
 			}
 		}
-	}
+	});
 
-	for (int x = 0; x < m_cellNumX; ++x) {
+	Solver_Utils::ParallelFor(0, m_cellNumX, [&](int x) {
 		for (int y = 0; y < m_cellNumY; ++y) {
 			for (int z = 0; z < m_cellNumZ + 1; ++z) { //Normalize grid velocities on Z (W) faces
 				if (m_gridWeightW(x, y, z) > 0.0f)
 					m_gridVW(x, y, z) /= m_gridWeightW(x, y, z);
 			}
 		}
-	}
+	});
 }
 
 void FLIPSolver::SaveGridBefore()
@@ -367,7 +369,7 @@ void FLIPSolver::ApplyGravity(float dt)
 {
 	//Note: we apply gravity to our cells, not our particles!
 	//X faces
-	for (int x = 0; x < m_cellNumX + 1; ++x) {
+	Solver_Utils::ParallelFor(0, m_cellNumX + 1, [&](int x) {
 		for (int y = 0; y < m_cellNumY; ++y) {
 			for (int z = 0; z < m_cellNumZ; ++z)
 			{
@@ -380,10 +382,10 @@ void FLIPSolver::ApplyGravity(float dt)
 				}
 			}
 		}
-	}
+	});
 
 	//Y faces
-	for (int x = 0; x < m_cellNumX; ++x) {
+	Solver_Utils::ParallelFor(0, m_cellNumX, [&](int x) {
 		for (int y = 0; y < m_cellNumY + 1; ++y) {
 			for (int z = 0; z < m_cellNumZ; ++z)
 			{
@@ -396,10 +398,10 @@ void FLIPSolver::ApplyGravity(float dt)
 				}
 			}
 		}
-	}
+	});
 
 	//Z faces
-	for (int x = 0; x < m_cellNumX; ++x) {
+	Solver_Utils::ParallelFor(0, m_cellNumX, [&](int x) {
 		for (int y = 0; y < m_cellNumY; ++y) {
 			for (int z = 0; z < m_cellNumZ + 1; ++z)
 			{
@@ -412,7 +414,7 @@ void FLIPSolver::ApplyGravity(float dt)
 				}
 			}
 		}
-	}
+	});
 
 	//Gravity applied directly to particles
 	//for (int p = 0; p < m_numParticles; p++)
@@ -564,7 +566,7 @@ void FLIPSolver::ComputeDivergence()
 			z >= 0 && z < m_cellNumZ;
 		};
 
-	for (int x = 0; x < m_cellNumX; x++)
+	Solver_Utils::ParallelFor(0, m_cellNumX, [&](int x)
 	{
 		for (int y = 0; y < m_cellNumY; y++)
 		{
@@ -607,7 +609,7 @@ void FLIPSolver::ComputeDivergence()
 				m_gridDivergence(x, y, z) = divergence;
 			}
 		}
-	}
+	});
 }
 
 void FLIPSolver::ResolveParticleCollisions()
@@ -623,7 +625,7 @@ void FLIPSolver::ResolveParticleCollisions()
 	const Eigen::Vector3f minBound(xMin, yMin, zMin);
 	const Eigen::Vector3f maxBound(xMax, yMax, zMax);
 
-	for (int p = 0; p < m_numParticles; ++p)
+	Solver_Utils::ParallelFor(0, m_numParticles, [&](int p)
 	{
 		Eigen::Ref<Eigen::RowVector3f> pos = m_particlePos.row(p);
 		Eigen::Ref<Eigen::RowVector3f> vel = m_particleV.row(p);
@@ -641,12 +643,12 @@ void FLIPSolver::ResolveParticleCollisions()
 			else if (pos[i] > maxBound[i])
 			{
 				pos[i] = maxBound[i];
-				float velocityNormal = vel[i]; 
+				float velocityNormal = vel[i];
 				if (velocityNormal > 0.0f)
 					vel[i] -= velocityNormal;
 			}
 		}
-	}
+	});
 }
 
 void FLIPSolver::SaveGridAfter()
@@ -659,7 +661,7 @@ void FLIPSolver::SaveGridAfter()
 void FLIPSolver::TransferG2P(float dt)
 {
 	ComputeDivergence(); //Necessary for adaptive mixing!!!
-	for (int p = 0; p < m_numParticles; ++p)
+	Solver_Utils::ParallelFor(0, m_numParticles, [&](int p)
 	{
 		const Eigen::Vector3f pos = m_particlePos.row(p).transpose();
 
@@ -857,7 +859,7 @@ void FLIPSolver::TransferG2P(float dt)
 			picAlpha = CalculatePicAlpha(dt, pos);
 		Eigen::Vector3f vNew = picAlpha * picVelocity + (1.f - picAlpha) * (vOld + flipVelocity);
 		m_particleV.row(p) = vNew.transpose(); //transpose because m_particleV is RowMajor
-	}
+	});
 }
 
 

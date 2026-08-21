@@ -40,10 +40,10 @@ const writeMeasurementsToFile = Module.cwrap('WriteMeasurementsToFile', null, ['
 const config: SolverConfigUtils.SolverConfig = {
     gridX: 20,
     gridY: 20,
-    gridZ: 20,
-    numParticles: 500,
+    gridZ: 100,
+    numParticles: 10000,
     particleRadius: 0.5,
-    alphaPic: 0.05,
+    alphaPic: 0.95,
     useAdaptiveMixing: false,
 }
 const solverConfigPtr = SolverConfigUtils.createSolverConfig(Module, config); //temp, change later

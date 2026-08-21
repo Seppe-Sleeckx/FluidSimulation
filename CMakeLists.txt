@@ -27,11 +27,15 @@ target_link_libraries(Fluid_Solver PRIVATE Eigen3::Eigen)
 #Emscriptem build stuff
 if(EMSCRIPTEN)
 
+    target_compile_options(Fluid_Solver PRIVATE -pthread)
+
     add_executable(fluid_wasm src/empty.cpp) #needed because emscritpem can only generate WASM from executables, not libraries so we add an empty file where all libraries get pulled in as final link target
 
     target_link_libraries(fluid_wasm
         PRIVATE Fluid_Solver
     )
+
+    target_compile_options(fluid_wasm PRIVATE -pthread)
 
     set_target_properties(fluid_wasm PROPERTIES
         OUTPUT_NAME "fluid_solver"
@@ -42,8 +46,11 @@ if(EMSCRIPTEN)
         "-sWASM=1"
         "-sMODULARIZE=1"
         "-sEXPORT_ES6=1"
-        "-sENVIRONMENT=web"
+        "-sENVIRONMENT=web,worker"
         "-sALLOW_MEMORY_GROWTH=1"
+        "-pthread"
+        "-sUSE_PTHREADS=1"
+        "-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency"
         "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap', 'FS', 'HEAP32', 'HEAPF32']"
         "-sEXPORTED_FUNCTIONS=['_Create','_Destroy','_Initialize','_Simulate','_GetParticleCount','_GetParticlePositions', '_GetGridXDimension', '_GetGridYDimension', '_GetGridZDimension', '_WriteMeasurementsToFile', '_malloc', '_free']"
     )

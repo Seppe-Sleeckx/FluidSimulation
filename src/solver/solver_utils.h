@@ -1,8 +1,52 @@
 #include <array>
 #include <Eigen/Dense>
+#include <algorithm>
+#include <thread>
+#include <vector>
 
 namespace Solver_Utils
 {
+    template <typename Func>
+    void ParallelFor(int begin, int end, Func func)
+    {
+        const int count = end - begin;
+        if (count <= 0)
+            return;
+
+        const unsigned numThreads = std::min<unsigned>(std::max(1u, std::thread::hardware_concurrency()), static_cast<unsigned>(count));
+
+        if (numThreads <= 1)
+        {
+            for (int i = begin; i < end; ++i)
+                func(i);
+            return;
+        }
+
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+
+        const int chunk = count / static_cast<int>(numThreads);
+        const int remainder = count % static_cast<int>(numThreads);
+        int rangeStart = begin;
+
+        for (unsigned t = 0; t < numThreads; ++t)
+        {
+            const int rangeSize = chunk + (static_cast<int>(t) < remainder ? 1 : 0);
+            const int rangeEnd = rangeStart + rangeSize;
+
+            threads.emplace_back([rangeStart, rangeEnd, &func]()
+            {
+                for (int i = rangeStart; i < rangeEnd; ++i)
+                    func(i);
+            });
+
+            rangeStart = rangeEnd;
+        }
+
+        for (auto& t : threads)
+            t.join();
+    }
+
     struct SolverConfig //only use POD, Eigen or STL doesnt work well when needing to use it in js/typescript later
     {
         int gridX;
