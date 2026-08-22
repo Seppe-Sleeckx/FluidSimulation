@@ -30,6 +30,21 @@ export class Camera {
         vec3.normalize(this.up, this.up);
     }
 
+    lookAtBounds(x: number, y: number, z: number, fovY = Math.PI / 4) {
+        const center = vec3.fromValues(x / 2, y / 2, z / 2);
+        const halfExtent = Math.max(x, y) / 2;
+        const distance = halfExtent / Math.tan(fovY / 2) * 1.2; // 20% margin
+
+        vec3.set(this.position, center[0], center[1], z + distance);
+
+        const dir = vec3.create();
+        vec3.subtract(dir, center, this.position);
+        vec3.normalize(dir, dir);
+        this.yaw = Math.atan2(dir[0], dir[2]);
+        this.pitch = Math.asin(dir[1]);
+        this.updateVectors();
+    }
+
     getViewProjection(aspect: number): mat4 {
         this.updateVectors();
 

@@ -35,7 +35,10 @@ export class InputController {
         });
 
         //Keyboard
-        window.addEventListener("keydown", e => this.keys.add(e.code));
+        window.addEventListener("keydown", e => {
+            if (e.target instanceof HTMLInputElement) return; //ignore keys while typing in UI fields
+            this.keys.add(e.code);
+        });
         window.addEventListener("keyup", e => this.keys.delete(e.code));
     }
 

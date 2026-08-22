@@ -28,7 +28,7 @@ public:
 
 private:
 	const Eigen::Vector3f m_gravity = Eigen::Vector3f(0.0f, -9.81f, 0.0f);;
-	const float m_alphaPIC = 0.05f;
+	const float m_alphaPIC;
 	bool m_useAdaptiveMixing = false;
 
 	//-- Grid --

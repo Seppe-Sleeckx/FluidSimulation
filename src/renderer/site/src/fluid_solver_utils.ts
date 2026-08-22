@@ -9,7 +9,7 @@ export interface SolverConfig {
 }
 
 export function createSolverConfig(Module: any, config: SolverConfig): number { //we return a number, this is actually the ptr to the config in wasm memory
-    const BYTESIZE = 24;
+    const BYTESIZE = 28;
     const ptr = Module._malloc(BYTESIZE);
 
     const i32 = Module.HEAP32;
@@ -24,6 +24,7 @@ export function createSolverConfig(Module: any, config: SolverConfig): number { 
 
     f32[(ptr + 16) >> 2] = config.particleRadius;
     f32[(ptr + 20) >> 2] = config.alphaPic;
+    i32[(ptr + 24) >> 2] = config.useAdaptiveMixing ? 1 : 0;
 
     return ptr;
 }

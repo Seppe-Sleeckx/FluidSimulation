@@ -36,6 +36,7 @@ FLIPSolver::FLIPSolver(const SolverConfig& config) :
 	m_gridCellType{ m_cellNumX, m_cellNumY, m_cellNumZ },
 	m_particlePos(m_numParticles, 3),
 	m_particleV(m_numParticles, 3),
+	m_alphaPIC{ config.alphaPic },
 	m_useAdaptiveMixing{ config.useAdaptiveMixing }
 {
 	m_particleV.setZero();
@@ -50,11 +51,11 @@ void FLIPSolver::Initialize()
 	float maxParticlesZ = (m_cellNumZ * m_CellSize) / diameter;
 
 	int pIdx = 0;
-	for (int iz = 0; iz < maxParticlesZ; ++iz)
+	for (int ix = 0; ix < maxParticlesX; ++ix)
 	{
 		if (pIdx >= m_numParticles)
 			break;
-		float z = iz * diameter;
+		float x = ix * diameter;
 
 		for (int iy = 0; iy < maxParticlesY; ++iy)
 		{
@@ -62,11 +63,11 @@ void FLIPSolver::Initialize()
 				break;
 			float y = (m_cellNumY * m_CellSize) - iy * diameter; //top down
 
-			for (int ix = 0; ix < maxParticlesX; ++ix)
+			for (int iz = 0; iz < maxParticlesZ; ++iz)
 			{
 				if (pIdx >= m_numParticles)
 					break;
-				float x = ix * diameter;
+				float z = iz * diameter;
 				m_particlePos.row(pIdx) = Eigen::Vector3f(x, y, z);
 				++pIdx;
 			}
@@ -128,7 +129,7 @@ void FLIPSolver::Simulate(float dt)
 
 	//Solve for incompressibility (only applicable for fluids, not gasses)
 	UpdateParticleDensity();
-	SolveIncompressibility(dt, 40);
+	SolveIncompressibility(dt, 20);
 
 	//store grid velocity after projection (Only necessary for FLIP)
 	SaveGridAfter();

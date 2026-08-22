@@ -5,6 +5,7 @@ import { ParticleRenderer } from "./ParticleRenderer";
 import { BoundsRenderer } from "./BoundsRenderer.ts"
 import fluidSolverModule from "./fluid_solver.js";
 import * as SolverConfigUtils from "./fluid_solver_utils.ts"
+import GUI from "lil-gui";
 
 const canvas = document.getElementById("simulation") as HTMLCanvasElement;
 
@@ -38,29 +39,14 @@ const writeMeasurementsToFile = Module.cwrap('WriteMeasurementsToFile', null, ['
 
 
 const config: SolverConfigUtils.SolverConfig = {
-    gridX: 20,
+    gridX: 50,
     gridY: 20,
-    gridZ: 100,
-    numParticles: 10000,
+    gridZ: 20,
+    numParticles: 5000,
     particleRadius: 0.5,
     alphaPic: 0.95,
     useAdaptiveMixing: false,
 }
-const solverConfigPtr = SolverConfigUtils.createSolverConfig(Module, config); //temp, change later
-const solverHandle = create(solverConfigPtr);
-SolverConfigUtils.freeSolverConfig(Module, solverConfigPtr); //free the memory after creating our solver
-
-initialize(solverHandle);
-
-//================
-//Renderers
-//================
-const particleRenderer = new ParticleRenderer(gpu, camera, getParticleCount(solverHandle));
-particleRenderer.initialize(); //setup renderer for x amount fo particles
-
-const boundsRenderer = new BoundsRenderer(gpu, camera, getGridX(solverHandle), getGridY(solverHandle), getGridZ(solverHandle));
-boundsRenderer.Initialize();
-
 
 const depthTexture = gpu.device.createTexture({
     size: [canvas.width, canvas.height],
@@ -69,9 +55,63 @@ const depthTexture = gpu.device.createTexture({
 });
 
 
+const fixedDt = 1 / 30;
+let simAccumulator = 0;
 let accumulatedTime = 0;
 const maxSimTime = 30; //in seconds
 let lastTime = performance.now();
+
+//================
+//Simulation state
+//================
+let solverHandle = 0;
+let particleRenderer: ParticleRenderer | null = null;
+let boundsRenderer: BoundsRenderer | null = null;
+
+function startSimulation() {
+    if (solverHandle)
+        destroy(solverHandle);
+
+    const solverConfigPtr = SolverConfigUtils.createSolverConfig(Module, config);
+    solverHandle = create(solverConfigPtr);
+    SolverConfigUtils.freeSolverConfig(Module, solverConfigPtr); //free the memory after creating solver
+
+    initialize(solverHandle);
+
+    particleRenderer = new ParticleRenderer(gpu, camera, getParticleCount(solverHandle));
+    particleRenderer.initialize(); //setup renderer
+
+    boundsRenderer = new BoundsRenderer(gpu, camera, getGridX(solverHandle), getGridY(solverHandle), getGridZ(solverHandle));
+    boundsRenderer.Initialize();
+    camera.lookAtBounds(getGridX(solverHandle), getGridY(solverHandle), getGridZ(solverHandle));
+
+    simAccumulator = 0;
+    accumulatedTime = 0;
+    lastTime = performance.now();
+}
+
+//================
+//UI
+//================
+const stats = { fps: 0 };
+
+const gui = new GUI({ title: "FLIP Simulation" });
+gui.add(stats, "fps").name("FPS").listen().disable();
+
+const configFolder = gui.addFolder("New simulation");
+configFolder.add(config, "gridX", 1).step(1);
+configFolder.add(config, "gridY", 1).step(1);
+configFolder.add(config, "gridZ", 1).step(1);
+configFolder.add(config, "numParticles", 1).step(1);
+configFolder.add(config, "particleRadius", 0.05, 2, 0.01);
+configFolder.add(config, "alphaPic", 0, 1, 0.01);
+configFolder.add(config, "useAdaptiveMixing");
+configFolder.add({ start: startSimulation }, "start").name("Start simulation");
+
+let fpsFrames = 0;
+let fpsLastUpdate = performance.now();
+
+startSimulation();
 
 function draw() {
     Update();
@@ -93,8 +133,8 @@ function draw() {
     const encoder = gpu.device.createCommandEncoder();
     const pass = encoder.beginRenderPass(renderPassDescriptor);
 
-    boundsRenderer.Draw(pass);
-    particleRenderer.Draw(pass);
+    boundsRenderer?.Draw(pass);
+    particleRenderer?.Draw(pass);
 
     pass.end();
     const commandBuffer = encoder.finish();
@@ -108,13 +148,25 @@ function Update()
     const dt = (now - lastTime) / 1000; //in seconds
     lastTime = now;
 
+    //fps counter
+    fpsFrames++;
+    if (now - fpsLastUpdate >= 500) {
+        stats.fps = Math.round(fpsFrames * 1000 / (now - fpsLastUpdate));
+        fpsFrames = 0;
+        fpsLastUpdate = now;
+    }
+
     //camera movement
     inputController.update(dt);
 
 
-    if (accumulatedTime < maxSimTime) {
-        simulate(solverHandle, dt); // physics step
-        accumulatedTime += dt;
+    if (solverHandle && particleRenderer && accumulatedTime < maxSimTime) {
+        simAccumulator = Math.min(simAccumulator + dt, fixedDt); //never queue more than one physics step
+        if (simAccumulator >= fixedDt && accumulatedTime < maxSimTime) {
+            simulate(solverHandle, fixedDt); // physics step
+            simAccumulator -= fixedDt;
+            accumulatedTime += fixedDt;
+        }
 
         if(accumulatedTime > maxSimTime)
         {
