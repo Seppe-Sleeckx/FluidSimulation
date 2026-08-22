@@ -183,28 +183,6 @@ void FLIPSolver::MarkFluidCells() {
 		if (m_gridCellType(ix, iy, iz) != CellType::Solid)
 			m_gridCellType(ix, iy, iz) = CellType::Fluid; //mark all cells with particles inside as fluid (except for solid cells)
 	}
-
-	//DEBUG:
-	//constexpr auto cellTypeToString = [](CellType type) -> const char* {
-	//	switch (type)
-	//	{
-	//	case CellType::Air:   return "Air";
-	//	case CellType::Fluid: return "Fluid";
-	//	case CellType::Solid: return "Solid";
-	//	default:              return "-";
-	//	}
-	//	};
-	//for (int x = 0; x < m_cellNumX; ++x) {
-	//	for (int y = 0; y < m_cellNumY; ++y) {
-	//		for (int z = 0; z < m_cellNumZ; ++z)
-	//		{
-	//			auto type = m_gridCellType(x, y, z);
-	//			if (type != CellType::Fluid)
-	//				continue;
-	//			std::cout << "CELL{" << x << ',' << y << ',' << z << "} has type " << cellTypeToString(type) << '\n';
-	//		}
-	//	}
-	//}
 }
 
 void FLIPSolver::IntegrateParticles(float dt)
@@ -416,12 +394,6 @@ void FLIPSolver::ApplyGravity(float dt)
 			}
 		}
 	});
-
-	//Gravity applied directly to particles
-	//for (int p = 0; p < m_numParticles; p++)
-	//{
-	//	m_particleV.row(p) += m_gravity * dt;
-	//}
 }
 
 void FLIPSolver::UpdateParticleDensity()
