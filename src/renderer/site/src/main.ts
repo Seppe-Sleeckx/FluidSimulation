@@ -109,7 +109,7 @@ configFolder.add(config, "numParticles", 1).step(1);
 configFolder.add(config, "particleRadius", 0.05, 2, 0.01);
 configFolder.add(config, "alphaPic", 0, 1, 0.01);
 configFolder.add(config, "useAdaptiveMixing");
-configFolder.add(config, "divergenceScale", 0, 10, 0.05);
+configFolder.add(config, "divergenceScale", 0, 50, 0.05);
 configFolder.add({ start: startSimulation }, "start").name("Start simulation");
 
 let fpsFrames = 0;
