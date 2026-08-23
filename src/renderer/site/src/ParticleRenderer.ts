@@ -153,6 +153,11 @@ export class ParticleRenderer {
         });
     }
 
+    destroy() {
+        this.particleBuffer.destroy();
+        this.uniformBuffer.destroy();
+    }
+
     updateParticles(data: Float32Array) {
         this.gpuContext.device.queue.writeBuffer(this.particleBuffer, 0, data.buffer, data.byteOffset, data.byteLength);
     }

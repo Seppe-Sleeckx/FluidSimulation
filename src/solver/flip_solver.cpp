@@ -82,23 +82,42 @@ void FLIPSolver::Initialize()
 	
 
 	//2. Compute particle rest density, make sure particles are at rest positions
-	UpdateParticleDensity(); //very important, m_gridDensity will be zero otherwise
-	m_particleRestDensity = 0.0f;
-	int numFluidCells = 0;
+	UpdateGridDensity(); //very important, m_gridDensity will be zero otherwise
+
+	//Average only over interior fluid cells (all 6 neighbours fluid).
+	float interiorSum = 0.0f, fluidSum = 0.0f;
+	int numInterior = 0, numFluid = 0;
+
+	auto isFluid = [&](int x, int y, int z) {
+		return x >= 0 && x < m_cellNumX && y >= 0 && y < m_cellNumY && z >= 0 && z < m_cellNumZ &&
+			m_gridCellType(x, y, z) == CellType::Fluid;
+		};
 
 	for (int x = 0; x < m_cellNumX; x++)
 		for (int y = 0; y < m_cellNumY; y++)
 			for (int z = 0; z < m_cellNumZ; z++)
 			{
-				if (m_gridCellType(x, y, z) == CellType::Fluid)
+				if (m_gridCellType(x, y, z) != CellType::Fluid)
+					continue;
+
+				fluidSum += m_gridDensity(x, y, z);
+				numFluid++;
+
+				if (isFluid(x - 1, y, z) && isFluid(x + 1, y, z) &&
+					isFluid(x, y - 1, z) && isFluid(x, y + 1, z) &&
+					isFluid(x, y, z - 1) && isFluid(x, y, z + 1))
 				{
-					m_particleRestDensity += m_gridDensity(x, y, z);
-					numFluidCells++;
+					interiorSum += m_gridDensity(x, y, z);
+					numInterior++;
 				}
 			}
 
-	if (numFluidCells > 0)
-		m_particleRestDensity /= float(numFluidCells);
+	if (numInterior > 0)
+		m_particleRestDensity = interiorSum / float(numInterior);
+	else if (numFluid > 0)
+		m_particleRestDensity = fluidSum / float(numFluid);
+	else
+		m_particleRestDensity = 0.0f;
 
 	std::cout << "particle rest density: " << m_particleRestDensity << std::endl;
 }
@@ -128,7 +147,7 @@ void FLIPSolver::Simulate(float dt)
 
 
 	//Solve for incompressibility (only applicable for fluids, not gasses)
-	UpdateParticleDensity();
+	UpdateGridDensity();
 	SolveIncompressibility(dt, 20);
 
 	//store grid velocity after projection (Only necessary for FLIP)
@@ -201,12 +220,10 @@ void FLIPSolver::TransferP2G()
 		const Eigen::Vector3f vel = m_particleV.row(p);
 
 		{//X faces
-			Eigen::Vector3f uPos = pos;
-
-			//base cell idx + fractional offset (f) inside cell
+			//base face idx + fractional offset (f), U faces are offset half a cell along x
 			int ix, iy, iz;
 			Eigen::Vector3f f;
-			ComputeCellCoordinates(uPos, ix, iy, iz, f);
+			ComputeFaceCoordinates(pos, 0, ix, iy, iz, f);
 
 			//Calulcate weights
 			Solver_Utils::Weight3D W;
@@ -237,12 +254,10 @@ void FLIPSolver::TransferP2G()
 		}
 
 		{//Y faces
-			Eigen::Vector3f vPos = pos;
-
-			//base cell idx + fractional offset (f) inside cell
+			//base face idx + fractional offset (f), V faces are offset half a cell along y
 			int ix, iy, iz;
 			Eigen::Vector3f f;
-			ComputeCellCoordinates(vPos, ix, iy, iz, f);
+			ComputeFaceCoordinates(pos, 1, ix, iy, iz, f);
 
 			//Calulcate weights
 			Solver_Utils::Weight3D W;
@@ -273,12 +288,10 @@ void FLIPSolver::TransferP2G()
 		}
 
 		{//Z faces
-			Eigen::Vector3f uPos = pos;
-
-			//base cell idx + fractional offset (f) inside cell
+			//base face idx + fractional offset (f), W faces are offset half a cell along z
 			int ix, iy, iz;
 			Eigen::Vector3f f;
-			ComputeCellCoordinates(uPos, ix, iy, iz, f);
+			ComputeFaceCoordinates(pos, 2, ix, iy, iz, f);
 
 			//Calulcate weights
 			Solver_Utils::Weight3D W;
@@ -396,7 +409,7 @@ void FLIPSolver::ApplyGravity(float dt)
 	});
 }
 
-void FLIPSolver::UpdateParticleDensity()
+void FLIPSolver::UpdateGridDensity()
 {
 	m_gridDensity.setZero();
 
@@ -642,19 +655,10 @@ void FLIPSolver::TransferG2P(float dt)
 		Eigen::Vector3f flipVelocity(0.0f, 0.0f, 0.0f);
 
 		{//X faces
-			Eigen::Vector3f uPos = pos;
-			uPos.y() += 0.5f * m_CellSize;
-			uPos.z() += 0.5f * m_CellSize;
-
-			uPos.x() = std::clamp(uPos.x(), 0.0f, m_cellNumX * m_CellSize);
-			uPos.y() = std::clamp(uPos.y(), 0.5f * m_CellSize, (m_cellNumY - 0.5f) * m_CellSize);
-			uPos.z() = std::clamp(uPos.z(), 0.5f * m_CellSize, (m_cellNumZ - 0.5f) * m_CellSize);
-
-
-			//base cell idx + fractional offset (f) inside cell
+			//base face idx + fractional offset (f), same convention as P2G
 			int ix, iy, iz;
 			Eigen::Vector3f f;
-			ComputeCellCoordinates(uPos, ix, iy, iz, f);
+			ComputeFaceCoordinates(pos, 0, ix, iy, iz, f);
 
 			//Compute 27 B-spline weights
 			Solver_Utils::Weight3D W;
@@ -703,19 +707,9 @@ void FLIPSolver::TransferG2P(float dt)
 		}
 
 		{//Y faces
-			Eigen::Vector3f vPos = pos;
-
-			vPos.x() += 0.5f * m_CellSize;
-			vPos.z() += 0.5f * m_CellSize;
-
-			vPos.x() = std::clamp(vPos.x(), 0.5f * m_CellSize, (m_cellNumX - 0.5f) * m_CellSize);
-			vPos.y() = std::clamp(vPos.y(), 0.0f, m_cellNumY * m_CellSize);
-			vPos.z() = std::clamp(vPos.z(), 0.5f * m_CellSize, (m_cellNumZ - 0.5f) * m_CellSize);
-
-			//base cell idx + fractional offset (f) inside cell
 			int ix, iy, iz;
 			Eigen::Vector3f f;
-			ComputeCellCoordinates(vPos, ix, iy, iz, f);
+			ComputeFaceCoordinates(pos, 1, ix, iy, iz, f);
 
 			//Compute 27 B-spline weights
 			Solver_Utils::Weight3D W;
@@ -763,19 +757,9 @@ void FLIPSolver::TransferG2P(float dt)
 		}
 
 		{//Z faces
-			Eigen::Vector3f wPos = pos;
-
-			wPos.z() += 0.5f * m_CellSize;
-			wPos.y() += 0.5f * m_CellSize;
-
-			wPos.x() = std::clamp(wPos.x(), 0.5f * m_CellSize, (m_cellNumX - 0.5f) * m_CellSize);
-			wPos.y() = std::clamp(wPos.y(), 0.5f * m_CellSize, (m_cellNumY - 0.5f) * m_CellSize);
-			wPos.z() = std::clamp(wPos.z(), 0.0f, m_cellNumZ * m_CellSize);
-
-			//base cell idx + fractional offset (f) inside cell
 			int ix, iy, iz;
 			Eigen::Vector3f f;
-			ComputeCellCoordinates(wPos, ix, iy, iz, f);
+			ComputeFaceCoordinates(pos, 2, ix, iy, iz, f);
 
 			//Compute 27 B-spline weights
 			Solver_Utils::Weight3D W;
@@ -827,9 +811,7 @@ void FLIPSolver::TransferG2P(float dt)
 		Eigen::Vector3f vOld = m_particleV.row(p).transpose();
 		float picAlpha = m_alphaPIC;
 		if (m_useAdaptiveMixing)
-			picAlpha = m_alphaPIC;
-		else
-			picAlpha = CalculatePicAlpha(dt, pos);
+			picAlpha = CalculatePicAlpha(dt, pos);;
 		Eigen::Vector3f vNew = picAlpha * picVelocity + (1.f - picAlpha) * (vOld + flipVelocity);
 		m_particleV.row(p) = vNew.transpose(); //transpose because m_particleV is RowMajor
 	});
@@ -841,10 +823,10 @@ void FLIPSolver::TransferG2P(float dt)
 //===============
 float FLIPSolver::CalculatePicAlpha(float dt, const Eigen::Vector3f& particlePos) const
 {
-	constexpr float divergenceScale = 0.1f; //tune!!!
+	constexpr float divergenceScale = 0.1f; //tune [0,1], how sensitive the solver is to divergence and tries to correct it!!!
 	constexpr float maxPic = 1.0f;
 
-	float divergence = std::abs(GetWeightedDivergenceAtPos(particlePos));
+	float divergence = std::abs(GetWeightedDivergenceAtPos(particlePos)) / m_CellSize;
 	float alpha = divergence * dt * divergenceScale;
 	alpha = std::clamp(alpha, 0.0f, maxPic);
 	return alpha;
@@ -953,6 +935,26 @@ void FLIPSolver::PushParticlesApart(int iterations)
 	}
 }
 
+void FLIPSolver::ComputeFaceCoordinates(const Eigen::Vector3f& particle, int axis, int& ix, int& iy, int& iz, Eigen::Vector3f& f) const
+{
+	//Face grids (U/V/W) are staggered: node i along its own axis sits at i*h instead of (i+0.5)*h
+	Eigen::Vector3f gridPos = particle / m_CellSize;
+	gridPos[axis] += 0.5f;
+
+	//face grid has one extra node along its own axis
+	const int maxX = m_cellNumX - 1 + (axis == 0 ? 1 : 0);
+	const int maxY = m_cellNumY - 1 + (axis == 1 ? 1 : 0);
+	const int maxZ = m_cellNumZ - 1 + (axis == 2 ? 1 : 0);
+
+	ix = std::clamp(static_cast<int>(std::floor(gridPos.x())), 0, maxX);
+	iy = std::clamp(static_cast<int>(std::floor(gridPos.y())), 0, maxY);
+	iz = std::clamp(static_cast<int>(std::floor(gridPos.z())), 0, maxZ);
+
+	f.x() = gridPos.x() - ix;
+	f.y() = gridPos.y() - iy;
+	f.z() = gridPos.z() - iz;
+}
+
 void FLIPSolver::ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix, int& iy, int& iz, Eigen::Vector3f& f) const
 {
 	//convert from grid space to world space
@@ -984,7 +986,7 @@ void FLIPSolver::StartMeasurement()
 
 void FLIPSolver::EndMeasurement()
 {
-	FrameMeasurement fm;
+	FrameMeasurement fm{};
 	//measure time taken
 	auto endTime = std::chrono::high_resolution_clock::now();
 	float stepTime = std::chrono::duration<float, std::milli>(endTime - m_measureStart).count(); //in muilliseconds
@@ -1005,6 +1007,7 @@ void FLIPSolver::EndMeasurement()
 	float totalCompression = 0.0f;
 	fm.maxCompression = 0.0f;
 	int compressedCellCount = 0;
+	int fluidCellCount = 0;
 
 	for (int ix = 0; ix < m_cellNumX; ix++){
 		for (int iy = 0; iy < m_cellNumY; iy++){
@@ -1012,6 +1015,9 @@ void FLIPSolver::EndMeasurement()
 			{
 				//if (m_gridDensity(ix, iy, iz) < 0.5f * m_particleRestDensity) //avoid counting free surfaces
 				//	continue;
+
+				if (m_gridCellType(ix, iy, iz) == CellType::Fluid)
+					fluidCellCount++;
 
 				float compression = m_gridDensity(ix, iy, iz) - m_particleRestDensity;
 				if (compression > 0.0f)
@@ -1027,6 +1033,9 @@ void FLIPSolver::EndMeasurement()
 	if(compressedCellCount > 0)
 		fm.averageCompression = totalCompression / compressedCellCount;
 
+	//total fluid volume (number of fluid cells * cell volume)
+	fm.totalVolume = fluidCellCount * m_CellSize * m_CellSize * m_CellSize;
+
 
 	m_frameMeasurements.emplace_back(fm);
 }
@@ -1040,13 +1049,12 @@ void FLIPSolver::WriteLog(const std::string& filename) const
 		return;
 
 	// Write header
-	outFile << "FrameIdx,StepTime (in ms),AverageDivergence\n";
+	outFile << "FrameIdx,StepTime (in ms),AverageDivergence,AverageCompression,MaxCompression,TotalVolume\n";
 
 	for (size_t i = 0; i < m_frameMeasurements.size(); ++i)
 	{
-		std::cout << "frame: " << i << std::endl;
 		const FrameMeasurement& fm = m_frameMeasurements[i];
-		outFile << i << "," << fm.stepTime << "," << fm.averageDivergence << "\n";
+		outFile << i << "," << fm.stepTime << "," << fm.averageDivergence << "," << fm.averageCompression << "," << fm.maxCompression << "," << fm.totalVolume << "\n";
 	}
 	std::cout << "(Solver) Succesfully written output to: " << filename << std::endl;
 }

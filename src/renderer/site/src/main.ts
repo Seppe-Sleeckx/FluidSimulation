@@ -44,7 +44,7 @@ const config: SolverConfigUtils.SolverConfig = {
     gridZ: 20,
     numParticles: 5000,
     particleRadius: 0.5,
-    alphaPic: 0.95,
+    alphaPic: 0.05,
     useAdaptiveMixing: false,
 }
 
@@ -55,7 +55,7 @@ const depthTexture = gpu.device.createTexture({
 });
 
 
-const fixedDt = 1 / 30;
+const fixedDt = 1 / 60;
 let simAccumulator = 0;
 let accumulatedTime = 0;
 const maxSimTime = 30; //in seconds
@@ -71,6 +71,8 @@ let boundsRenderer: BoundsRenderer | null = null;
 function startSimulation() {
     if (solverHandle)
         destroy(solverHandle);
+    particleRenderer?.destroy();
+    boundsRenderer?.Destroy();
 
     const solverConfigPtr = SolverConfigUtils.createSolverConfig(Module, config);
     solverHandle = create(solverConfigPtr);

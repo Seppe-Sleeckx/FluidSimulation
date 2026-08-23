@@ -140,6 +140,11 @@ export class BoundsRenderer {
         });
     }
 
+    Destroy(): void {
+        this.gridVertexBuffer.destroy();
+        this.uniformBuffer.destroy();
+    }
+
     Draw(pass: GPURenderPassEncoder) : void{
         //Set view projection matrix from camera
         const canvas = this.gpuContext.context.canvas as HTMLCanvasElement;

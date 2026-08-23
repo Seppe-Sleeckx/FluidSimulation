@@ -84,7 +84,7 @@ private:
 	void IntegrateParticles(float dt);
 	void PushParticlesApart(int iterations);
 	void ApplyGravity(float dt);
-	void UpdateParticleDensity();
+	void UpdateGridDensity();
 	void SolveIncompressibility(float dt, int iterations);
 
 	//Adaptive mixing
@@ -93,6 +93,7 @@ private:
 
 	//helpers
 	void ComputeCellCoordinates(const Eigen::Vector3f& particle, int& ix, int& iy, int& iz, Eigen::Vector3f& f) const;
+	void ComputeFaceCoordinates(const Eigen::Vector3f& particle, int axis, int& ix, int& iy, int& iz, Eigen::Vector3f& f) const; //axis: 0=U, 1=V, 2=W face grid
 	float inverseGridSpacing() const { return 1.0f / m_CellSize; } //Inverse of our grid cell size
 	int totalNumCells() const { return m_cellNumX * m_cellNumY * m_cellNumZ; }
 };
