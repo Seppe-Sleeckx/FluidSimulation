@@ -56,13 +56,21 @@ namespace Solver_Utils
         float particleRadius;
         float alphaPic;
         bool useAdaptiveMixing = false;
+        float divergenceScale = 1.0f;
+    };
+
+    struct DivergenceStats {
+        float average = 0.0f;
+        float max = 0.0f;
     };
 
     struct FrameMeasurement {
         float stepTime;
-        float averageDivergence;
+        DivergenceStats divBeforeG2P; //grid after pressure solve, as handed to G2P
+        DivergenceStats divAfterAdvection; //grid after next step's P2G, i.e. this frame's G2P result after advection/push-apart (backfilled; last frame stays 0)
         float averageCompression;
         float maxCompression;
+        float meanDensityError;
         float totalVolume;
         //maybe also track pressure?
     };

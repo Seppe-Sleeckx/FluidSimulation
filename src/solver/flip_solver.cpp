@@ -37,7 +37,8 @@ FLIPSolver::FLIPSolver(const SolverConfig& config) :
 	m_particlePos(m_numParticles, 3),
 	m_particleV(m_numParticles, 3),
 	m_alphaPIC{ config.alphaPic },
-	m_useAdaptiveMixing{ config.useAdaptiveMixing }
+	m_useAdaptiveMixing{ config.useAdaptiveMixing },
+	m_divergenceScale{ config.divergenceScale }
 {
 	m_particleV.setZero();
 }
@@ -138,6 +139,7 @@ void FLIPSolver::Simulate(float dt)
 
 	//Particle velocity to grid (P2G)
 	TransferP2G();
+	m_divAfterAdvection = ComputeDivergenceStats(); //previous frame's G2P result, after advection/push-apart and re-binning
 
 	//Save grid velocities (Only necessary for FLIP)
 	SaveGridBefore();
@@ -154,6 +156,7 @@ void FLIPSolver::Simulate(float dt)
 	SaveGridAfter();
 
 	//Grid to particle (G2P)
+	m_divBeforeG2P = ComputeDivergenceStats(); //grid state handed to G2P (== post-solve residual)
 	TransferG2P(dt);
 }
 
@@ -598,6 +601,31 @@ void FLIPSolver::ComputeDivergence()
 	});
 }
 
+Solver_Utils::DivergenceStats FLIPSolver::ComputeDivergenceStats()
+{
+	ComputeDivergence();
+
+	Solver_Utils::DivergenceStats stats;
+	double sumAbs = 0.0;
+	int fluidCells = 0;
+
+	for (int x = 0; x < m_cellNumX; x++)
+		for (int y = 0; y < m_cellNumY; y++)
+			for (int z = 0; z < m_cellNumZ; z++)
+			{
+				if (m_gridCellType(x, y, z) != CellType::Fluid)
+					continue;
+				const float d = m_gridDivergence(x, y, z);
+				sumAbs += std::abs(d);
+				stats.max = std::max(stats.max, std::abs(d));
+				fluidCells++;
+			}
+
+	if (fluidCells > 0)
+		stats.average = static_cast<float>(sumAbs / fluidCells);
+	return stats;
+}
+
 void FLIPSolver::ResolveParticleCollisions()
 {
 	//bounds in world space
@@ -811,7 +839,7 @@ void FLIPSolver::TransferG2P(float dt)
 		Eigen::Vector3f vOld = m_particleV.row(p).transpose();
 		float picAlpha = m_alphaPIC;
 		if (m_useAdaptiveMixing)
-			picAlpha = CalculatePicAlpha(dt, pos);;
+			picAlpha = CalculatePicAlpha(dt, pos);
 		Eigen::Vector3f vNew = picAlpha * picVelocity + (1.f - picAlpha) * (vOld + flipVelocity);
 		m_particleV.row(p) = vNew.transpose(); //transpose because m_particleV is RowMajor
 	});
@@ -823,11 +851,10 @@ void FLIPSolver::TransferG2P(float dt)
 //===============
 float FLIPSolver::CalculatePicAlpha(float dt, const Eigen::Vector3f& particlePos) const
 {
-	constexpr float divergenceScale = 0.1f; //tune [0,1], how sensitive the solver is to divergence and tries to correct it!!!
 	constexpr float maxPic = 1.0f;
 
 	float divergence = std::abs(GetWeightedDivergenceAtPos(particlePos)) / m_CellSize;
-	float alpha = divergence * dt * divergenceScale;
+	float alpha = divergence * dt *m_divergenceScale;
 	alpha = std::clamp(alpha, 0.0f, maxPic);
 	return alpha;
 }
@@ -990,51 +1017,63 @@ void FLIPSolver::EndMeasurement()
 	//measure time taken
 	auto endTime = std::chrono::high_resolution_clock::now();
 	float stepTime = std::chrono::duration<float, std::milli>(endTime - m_measureStart).count(); //in muilliseconds
-	fm.stepTime = stepTime; 
+	fm.stepTime = stepTime;
 
-	//compute avg weighted divergence, fix this this is pointless, dont use abs()
-	ComputeDivergence();
-	float totalDivergence = 0.0f;
-	for (int p = 0; p < m_numParticles; ++p)
-	{
-		float weightedDivergence = std::abs(GetWeightedDivergenceAtPos(m_particlePos.row(p)));
-		totalDivergence += weightedDivergence;
-	}
-	fm.averageDivergence = totalDivergence / m_numParticles;
+	//divergence stats were captured inside Simulate()
+	fm.divBeforeG2P = m_divBeforeG2P;
+	//the post-P2G divergence measured this step belongs to the previous frame's G2P, so backfill that row
+	if (!m_frameMeasurements.empty())
+		m_frameMeasurements.back().divAfterAdvection = m_divAfterAdvection;
 
-
-	//compute density error
+	//Density metrics. m_gridDensity reflects the particle positions the pressure solve saw this step
 	float totalCompression = 0.0f;
-	fm.maxCompression = 0.0f;
+	float totalDensity = 0.0f;
+	float totalRelError = 0.0f;
 	int compressedCellCount = 0;
-	int fluidCellCount = 0;
+	int interiorCellCount = 0;
+
+	auto isFluid = [&](int x, int y, int z) {
+		return x >= 0 && x < m_cellNumX && y >= 0 && y < m_cellNumY && z >= 0 && z < m_cellNumZ &&
+			m_gridCellType(x, y, z) == CellType::Fluid;
+		};
 
 	for (int ix = 0; ix < m_cellNumX; ix++){
 		for (int iy = 0; iy < m_cellNumY; iy++){
 			for (int iz = 0; iz < m_cellNumZ; iz++)
 			{
-				//if (m_gridDensity(ix, iy, iz) < 0.5f * m_particleRestDensity) //avoid counting free surfaces
-				//	continue;
+				if (m_gridCellType(ix, iy, iz) != CellType::Fluid)
+					continue;
 
-				if (m_gridCellType(ix, iy, iz) == CellType::Fluid)
-					fluidCellCount++;
+				const float density = m_gridDensity(ix, iy, iz);
+				totalDensity += density;
 
-				float compression = m_gridDensity(ix, iy, iz) - m_particleRestDensity;
+				const float compression = density - m_particleRestDensity;
 				if (compression > 0.0f)
 				{
 					totalCompression += compression;
 					compressedCellCount++;
 					fm.maxCompression = std::max(fm.maxCompression, compression);
 				}
-					
+
+				//relative error only over interior cells
+				if (isFluid(ix - 1, iy, iz) && isFluid(ix + 1, iy, iz) &&
+					isFluid(ix, iy - 1, iz) && isFluid(ix, iy + 1, iz) &&
+					isFluid(ix, iy, iz - 1) && isFluid(ix, iy, iz + 1))
+				{
+					totalRelError += std::abs(compression);
+					interiorCellCount++;
+				}
 			}
 		}
 	}
-	if(compressedCellCount > 0)
+	if (compressedCellCount > 0)
 		fm.averageCompression = totalCompression / compressedCellCount;
+	if (interiorCellCount > 0 && m_particleRestDensity > 0.0f)
+		fm.meanDensityError = (totalRelError / interiorCellCount) / m_particleRestDensity;
 
-	//total fluid volume (number of fluid cells * cell volume)
-	fm.totalVolume = fluidCellCount * m_CellSize * m_CellSize * m_CellSize;
+	//total volume estimate: a full cell contributes cellsize^3, a half-full cell cellsize^3/2
+	const float cellVolume = m_CellSize * m_CellSize * m_CellSize;
+	fm.totalVolume = (m_particleRestDensity > 0.0f) ? (totalDensity / m_particleRestDensity) * cellVolume : 0.0f;
 
 
 	m_frameMeasurements.emplace_back(fm);
@@ -1049,12 +1088,16 @@ void FLIPSolver::WriteLog(const std::string& filename) const
 		return;
 
 	// Write header
-	outFile << "FrameIdx,StepTime (in ms),AverageDivergence,AverageCompression,MaxCompression,TotalVolume\n";
+	outFile << "FrameIdx,StepTime (in ms),DivergenceBeforeG2PAvg,DivergenceAfterAdvectionAvg,DivergenceBeforeG2PMax,DivergenceAfterAdvectionMax,AverageCompression,MaxCompression,MeanDensityError,TotalVolume\n";
 
 	for (size_t i = 0; i < m_frameMeasurements.size(); ++i)
 	{
 		const FrameMeasurement& fm = m_frameMeasurements[i];
-		outFile << i << "," << fm.stepTime << "," << fm.averageDivergence << "," << fm.averageCompression << "," << fm.maxCompression << "," << fm.totalVolume << "\n";
+		outFile << i << "," << fm.stepTime
+			<< "," << fm.divBeforeG2P.average << "," << fm.divAfterAdvection.average
+			<< "," << fm.divBeforeG2P.max << "," << fm.divAfterAdvection.max
+			<< "," << fm.averageCompression << "," << fm.maxCompression << "," << fm.meanDensityError
+			<< "," << fm.totalVolume << "\n";
 	}
 	std::cout << "(Solver) Succesfully written output to: " << filename << std::endl;
 }

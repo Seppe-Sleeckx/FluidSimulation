@@ -30,6 +30,7 @@ private:
 	const Eigen::Vector3f m_gravity = Eigen::Vector3f(0.0f, -9.81f, 0.0f);;
 	const float m_alphaPIC;
 	bool m_useAdaptiveMixing = false;
+	float m_divergenceScale = 1.0f;
 
 	//-- Grid --
 	const int m_cellNumX; //Num cells in X
@@ -71,6 +72,9 @@ private:
 	//-- Logging --
 	std::vector<Solver_Utils::FrameMeasurement> m_frameMeasurements;
 	std::chrono::high_resolution_clock::time_point m_measureStart;
+	Solver_Utils::DivergenceStats m_divBeforeG2P;
+	Solver_Utils::DivergenceStats m_divAfterAdvection;
+	Solver_Utils::DivergenceStats ComputeDivergenceStats();
 
 
 	void ClearGrid();

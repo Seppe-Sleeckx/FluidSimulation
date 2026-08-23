@@ -6,10 +6,11 @@ export interface SolverConfig {
     particleRadius: number;
     alphaPic: number;
     useAdaptiveMixing: boolean;
+    divergenceScale: number;
 }
 
 export function createSolverConfig(Module: any, config: SolverConfig): number { //we return a number, this is actually the ptr to the config in wasm memory
-    const BYTESIZE = 28;
+    const BYTESIZE = 32;
     const ptr = Module._malloc(BYTESIZE);
 
     const i32 = Module.HEAP32;
@@ -25,6 +26,7 @@ export function createSolverConfig(Module: any, config: SolverConfig): number { 
     f32[(ptr + 16) >> 2] = config.particleRadius;
     f32[(ptr + 20) >> 2] = config.alphaPic;
     i32[(ptr + 24) >> 2] = config.useAdaptiveMixing ? 1 : 0;
+    f32[(ptr + 28) >> 2] = config.divergenceScale;
 
     return ptr;
 }
